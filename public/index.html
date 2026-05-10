@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TruthScan - AI Content Detection Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary-50: #f0f4ff;
+            --primary-100: #e0eaff;
+            --primary-200: #c7d7fe;
+            --primary-300: #a5b8fc;
+            --primary-400: #8b92f8;
+            --primary-500: #7c6def;
+            --primary-600: #6854e2;
+            --primary-700: #5843c8;
+            --primary-800: #4938a3;
+            --primary-900: #3d3081;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+            color: var(--gray-900);
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header { 
+            text-align: center; 
+            color: white; 
+            margin-bottom: 40px;
+        }
+        
+        h1 { 
+            font-size: 3.5em; 
+            margin-bottom: 12px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        
+        .subtitle { 
+            font-size: 1.3em; 
+            opacity: 0.95;
+            font-weight: 400;
+        }
+        
+        .status-bar {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .card { 
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 50px rgba(0,0,0,0.2);
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid var(--gray-100);
+        }
+        
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-700) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .card-title {
+            font-size: 1.5em;
+            font-weight: 600;
+            color: var(--gray-900);
+        }
+        
+        .input-group { margin-bottom: 20px; }
+        
+        label { 
+            display: block; 
+            font-weight: 600; 
+            margin-bottom: 10px;
+            color: var(--gray-700);
+            font-size: 0.95em;
+        }
+        
+        input[type="text"], textarea { 
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: inherit;
+            transition: all 0.2s;
+            background: var(--gray-50);
+        }
+        
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary-500);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(104, 84, 226, 0.1);
+        }
+        
+        textarea { 
+            min-height: 120px;
+            resize: vertical;
+            line-height: 1.5;
+        }
+        
+        .btn {
+            padding: 12px 28px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-700) 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(104, 84, 226, 0.3);
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(104, 84, 226, 0.4);
+        }
+        
+        .btn-primary:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .result-box {
+            margin-top: 24px;
+            padding: 24px;
+            background: var(--gray-50);
+            border-radius: 12px;
+            border-left: 4px solid var(--primary-500);
+            display: none;
+        }
+        
+        .result-box.show { display: block; animation: slideIn 0.3s ease-out; }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .result-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        
+        .result-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: var(--gray-900);
+        }
+        
+        .score-badge {
+            font-size: 2em;
+            font-weight: 700;
+            padding: 12px 24px;
+            border-radius: 12px;
+            background: white;
+            display: inline-block;
+            margin: 16px 0;
+        }
+        
+        .score-high { color: var(--danger); }
+        .score-medium { color: var(--warning); }
+        .score-low { color: var(--success); }
+        
+        .result-content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 14px;
+            line-height: 1.7;
+        }
+        
+        .result-content pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            color: var(--gray-700);
+        }
+        
+        .error-box {
+            background: #fee;
+            color: #c33;
+            padding: 16px 20px;
+            border-radius: 10px;
+            margin-top: 16px;
+            display: none;
+            border-left: 4px solid var(--danger);
+            font-weight: 500;
+        }
+        
+        .error-box.show { display: block; }
+        
+        .loading {
+            display: none;
+            color: var(--primary-600);
+            margin-top: 12px;
+            font-weight: 500;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .loading.show { display: inline-flex; }
+        
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--primary-200);
+            border-top-color: var(--primary-600);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        
+        .feature-card {
+            padding: 24px;
+            background: var(--gray-50);
+            border-radius: 12px;
+            border: 2px solid var(--gray-100);
+            transition: all 0.2s;
+        }
+        
+        .feature-card:hover {
+            border-color: var(--primary-300);
+            background: white;
+            transform: translateY(-4px);
+        }
+        
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--primary-400) 0%, var(--primary-600) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 16px;
+        }
+        
+        .feature-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: var(--gray-900);
+            margin-bottom: 8px;
+        }
+        
+        .feature-description {
+            color: var(--gray-600);
+            line-height: 1.6;
+            font-size: 0.95em;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 6px 14px;
+            background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-700) 100%);
+            color: white;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 12px;
+        }
+        
+        .grid-2col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 24px;
+        }
+        
+        @media (max-width: 1100px) {
+            .grid-2col {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .info-banner {
+            background: linear-gradient(135deg, rgba(104, 84, 226, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border: 2px solid var(--primary-200);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .info-banner h3 {
+            color: var(--primary-700);
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .info-banner ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .info-banner li {
+            padding: 6px 0;
+            color: var(--gray-700);
+        }
+        
+        .info-banner li::before {
+            content: "✓ ";
+            color: var(--primary-600);
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .scan-hero {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        
+        .scan-hero-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        
+        .scan-hero-title {
+            font-size: 2em;
+            font-weight: 700;
+            color: var(--gray-900);
+            margin-bottom: 12px;
+        }
+        
+        .scan-hero-subtitle {
+            font-size: 1.1em;
+            color: var(--gray-600);
+        }
+        
+        .url-input-wrapper {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        
+        .url-input {
+            flex: 1;
+            padding: 16px 20px;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            font-size: 16px;
+            font-family: inherit;
+            transition: all 0.2s;
+            background: var(--gray-50);
+        }
+        
+        .url-input:focus {
+            outline: none;
+            border-color: var(--primary-500);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(104, 84, 226, 0.1);
+        }
+        
+        .btn-large {
+            padding: 16px 40px;
+            font-size: 16px;
+        }
+        
+        .progress-steps {
+            background: var(--gray-50);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .progress-steps.show {
+            display: block;
+        }
+        
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            background: white;
+        }
+        
+        .step-status {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        
+        .step-pending .step-status {
+            background: var(--gray-200);
+            color: var(--gray-500);
+        }
+        
+        .step-loading .step-status {
+            background: var(--primary-100);
+            color: var(--primary-600);
+        }
+        
+        .step-completed .step-status {
+            background: var(--success);
+            color: white;
+        }
+        
+        .step-error .step-status {
+            background: var(--danger);
+            color: white;
+        }
+        
+        .step-text {
+            flex: 1;
+            font-weight: 500;
+            color: var(--gray-700);
+        }
+        
+        .scan-results {
+            margin-top: 30px;
+            display: none;
+        }
+        
+        .scan-results.show {
+            display: block;
+        }
+        
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .result-card {
+            background: white;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s;
+        }
+        
+        .result-card:hover {
+            border-color: var(--primary-300);
+            transform: translateY(-2px);
+        }
+        
+        .result-card-title {
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--gray-900);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ TruthScan</h1>
+            <p class="subtitle">Chrome Extension Demo - AI Content Detection & Analysis Platform</p>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-dot"></div>
+                <strong>TruthScan Server:</strong> Frontend + API running on port 5000
+            </div>
+            <div class="status-item">
+                <strong>Status:</strong> <span style="color: var(--success); font-weight: 600;">Ready</span>
+            </div>
+        </div>
+
+        <!-- Scan Page Hero Section -->
+        <div class="scan-hero">
+            <div class="scan-hero-header">
+                <h2 class="scan-hero-title">🔍 Scan Any Webpage</h2>
+                <p class="scan-hero-subtitle">Enter a URL to perform complete AI detection, fact-checking, and content analysis</p>
+                <p style="font-size: 0.85em; color: rgba(255,255,255,0.8); margin-top: 8px;">💡 Works best with: Wikipedia articles, news sites, blogs, and simple content pages</p>
+            </div>
+            
+            <div class="url-input-wrapper">
+                <input 
+                    type="url" 
+                    id="pageUrl" 
+                    class="url-input" 
+                    placeholder="Try: https://en.wikipedia.org/wiki/Artificial_intelligence"
+                    onkeypress="if(event.key==='Enter') scanPage()"
+                >
+                <button class="btn btn-primary btn-large" onclick="scanPage()">
+                    <span>⚡</span>
+                    Scan Page
+                </button>
+            </div>
+            
+            <!-- Progress Steps -->
+            <div class="progress-steps" id="scanProgress">
+                <div class="progress-step step-pending" id="step-scrape">
+                    <div class="step-status">1</div>
+                    <div class="step-text">Scraping page content...</div>
+                </div>
+                <div class="progress-step step-pending" id="step-ai">
+                    <div class="step-status">2</div>
+                    <div class="step-text">Detecting AI-generated content...</div>
+                </div>
+                <div class="progress-step step-pending" id="step-fact">
+                    <div class="step-status">3</div>
+                    <div class="step-text">Fact-checking claims...</div>
+                </div>
+                <div class="progress-step step-pending" id="step-sentiment">
+                    <div class="step-status">4</div>
+                    <div class="step-text">Analyzing sentiment...</div>
+                </div>
+                <div class="progress-step step-pending" id="step-images">
+                    <div class="step-status">5</div>
+                    <div class="step-text">Checking images for AI...</div>
+                </div>
+            </div>
+            
+            <!-- Scan Results -->
+            <div class="scan-results" id="scanResults">
+                <h3 style="font-size: 1.3em; margin-bottom: 20px; color: var(--gray-900);">Analysis Results</h3>
+                <div class="results-grid">
+                    <div class="result-card">
+                        <div class="result-card-title">🤖 AI Detection</div>
+                        <div class="score-badge" id="scanAiScore">-</div>
+                        <div id="scanAiDetails" style="font-size: 0.9em; color: var(--gray-600);"></div>
+                    </div>
+                    <div class="result-card">
+                        <div class="result-card-title">✅ Fact Check</div>
+                        <div class="score-badge" id="scanFactScore">-</div>
+                        <div id="scanFactDetails" style="font-size: 0.9em; color: var(--gray-600);"></div>
+                    </div>
+                    <div class="result-card">
+                        <div class="result-card-title">😊 Sentiment</div>
+                        <div id="scanSentimentDetails" style="font-size: 0.9em; color: var(--gray-600); margin-top: 12px;"></div>
+                    </div>
+                    <div class="result-card">
+                        <div class="result-card-title">🎨 Images</div>
+                        <div id="scanImageDetails" style="font-size: 0.9em; color: var(--gray-600); margin-top: 12px;"></div>
+                    </div>
+                </div>
+                <div style="margin-top: 20px; padding: 20px; background: var(--gray-50); border-radius: 12px;">
+                    <h4 style="margin-bottom: 12px; color: var(--gray-900);">Full Analysis Data</h4>
+                    <div class="result-content">
+                        <pre id="scanFullData"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2col">
+            <!-- AI Detection Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🔍</div>
+                    <h2 class="card-title">AI Content Detection</h2>
+                </div>
+                <div class="input-group">
+                    <label>Enter text to analyze for AI generation:</label>
+                    <textarea id="detectText" placeholder="Paste any text here to check if it was generated by AI..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="detectAI()">
+                    <span>⚡</span>
+                    Detect AI Content
+                </button>
+                <div class="loading" id="detectLoading">
+                    <div class="spinner"></div>
+                    Analyzing...
+                </div>
+                <div class="error-box" id="detectError"></div>
+                <div class="result-box" id="detectResult">
+                    <div class="result-header">
+                        <span class="result-title">Detection Results</span>
+                    </div>
+                    <div class="score-badge" id="detectScore"></div>
+                    <div class="result-content" id="detectDetails"></div>
+                </div>
+            </div>
+
+            <!-- Fact Checking Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">✅</div>
+                    <h2 class="card-title">Fact Checking</h2>
+                </div>
+                <div class="input-group">
+                    <label>Enter claims to verify and fact-check:</label>
+                    <textarea id="factText" placeholder="Enter any claims, statements, or news to verify their accuracy..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="factCheck()">
+                    <span>🔎</span>
+                    Verify Facts
+                </button>
+                <div class="loading" id="factLoading">
+                    <div class="spinner"></div>
+                    Checking facts...
+                </div>
+                <div class="error-box" id="factError"></div>
+                <div class="result-box" id="factResult">
+                    <div class="result-header">
+                        <span class="result-title">Fact Check Results</span>
+                    </div>
+                    <div class="result-content" id="factDetails"></div>
+                </div>
+            </div>
+
+            <!-- Sentiment Analysis Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">😊</div>
+                    <h2 class="card-title">Sentiment Analysis</h2>
+                </div>
+                <div class="input-group">
+                    <label>Enter text for emotional tone analysis:</label>
+                    <textarea id="sentimentText" placeholder="Enter text to analyze its sentiment, tone, and emotional indicators..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="analyzeSentiment()">
+                    <span>📊</span>
+                    Analyze Sentiment
+                </button>
+                <div class="loading" id="sentimentLoading">
+                    <div class="spinner"></div>
+                    Analyzing...
+                </div>
+                <div class="error-box" id="sentimentError"></div>
+                <div class="result-box" id="sentimentResult">
+                    <div class="result-header">
+                        <span class="result-title">Sentiment Analysis</span>
+                    </div>
+                    <div class="result-content" id="sentimentDetails"></div>
+                </div>
+            </div>
+
+            <!-- Content Summarization Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">📝</div>
+                    <h2 class="card-title">Content Summarization</h2>
+                </div>
+                <div class="input-group">
+                    <label>Enter long text to get a concise summary:</label>
+                    <textarea id="summarizeText" placeholder="Paste a long article or document to generate a comprehensive summary..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="summarize()">
+                    <span>✨</span>
+                    Generate Summary
+                </button>
+                <div class="loading" id="summarizeLoading">
+                    <div class="spinner"></div>
+                    Summarizing...
+                </div>
+                <div class="error-box" id="summarizeError"></div>
+                <div class="result-box" id="summarizeResult">
+                    <div class="result-header">
+                        <span class="result-title">Summary</span>
+                    </div>
+                    <div class="result-content" id="summarizeDetails"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Image Detection Card (Full Width) -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon">🎨</div>
+                <h2 class="card-title">Image AI Detection</h2>
+            </div>
+            <div class="input-group">
+                <label>Enter image URL to detect if it's AI-generated:</label>
+                <input type="text" id="imageUrl" placeholder="https://example.com/image.jpg">
+            </div>
+            <button class="btn btn-primary" onclick="detectImage()">
+                <span>🖼️</span>
+                Detect AI Image
+            </button>
+            <div class="loading" id="imageLoading">
+                <div class="spinner"></div>
+                Analyzing image...
+            </div>
+            <div class="error-box" id="imageError"></div>
+            <div class="result-box" id="imageResult">
+                <div class="result-header">
+                    <span class="result-title">Image Detection Results</span>
+                </div>
+                <div class="score-badge" id="imageScore"></div>
+                <div class="result-content" id="imageDetails"></div>
+            </div>
+        </div>
+
+        <!-- Features Overview -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon">⭐</div>
+                <h2 class="card-title">Extension Features</h2>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔍</div>
+                    <h4 class="feature-title">Advanced Text Detection</h4>
+                    <p class="feature-description">State-of-the-art AI models identify generated text patterns with high accuracy</p>
+                    <span class="badge">Google Gemini 2.0</span>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">✅</div>
+                    <h4 class="feature-title">Fact Verification</h4>
+                    <p class="feature-description">Cross-reference claims against reliable sources in real-time</p>
+                    <span class="badge">Google Search API</span>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎨</div>
+                    <h4 class="feature-title">Image Analysis</h4>
+                    <p class="feature-description">Detect AI-generated images and deepfakes with precision</p>
+                    <span class="badge">NVIDIA Inference</span>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h4 class="feature-title">Sentiment Detection</h4>
+                    <p class="feature-description">Analyze emotional tone and potential bias in content</p>
+                    <span class="badge">Groq AI</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chrome Extension Screenshots Gallery -->
+        <div class="card" style="background: linear-gradient(135deg, rgba(102,126,234,0.05) 0%, rgba(118,75,162,0.05) 100%);">
+            <div class="card-header">
+                <div class="card-icon">📸</div>
+                <h2 class="card-title">Chrome Extension in Action</h2>
+            </div>
+            <p style="color: var(--gray-600); margin-bottom: 30px; font-size: 1.05em;">
+                See the actual Chrome extension interface scanning and analyzing web pages in real-time
+            </p>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
+                <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: transform 0.2s;">
+                    <img src="extension-demo.png" alt="Extension scanning Wikipedia page" style="width: 100%; height: auto; display: block;">
+                    <div style="padding: 16px;">
+                        <h4 style="font-weight: 600; margin-bottom: 8px; color: var(--gray-900);">🌐 Live Scanning</h4>
+                        <p style="color: var(--gray-600); font-size: 0.9em;">Extension analyzing a Wikipedia article in real-time</p>
+                    </div>
+                </div>
+                
+                <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: transform 0.2s;">
+                    <img src="Screenshot 2025-11-09 075239_1762655117847.png" alt="Scanning progress" style="width: 100%; height: auto; display: block;">
+                    <div style="padding: 16px;">
+                        <h4 style="font-weight: 600; margin-bottom: 8px; color: var(--gray-900);">⚡ Progress Tracking</h4>
+                        <p style="color: var(--gray-600); font-size: 0.9em;">Real-time progress showing each analysis step (2/8 completed)</p>
+                    </div>
+                </div>
+                
+                <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: transform 0.2s;">
+                    <img src="Screenshot 2025-11-09 075348_1762655117846.png" alt="Detailed analysis results" style="width: 100%; height: auto; display: block;">
+                    <div style="padding: 16px;">
+                        <h4 style="font-weight: 600; margin-bottom: 8px; color: var(--gray-900);">📊 Analysis Results</h4>
+                        <p style="color: var(--gray-600); font-size: 0.9em;">Comprehensive AI detection and sentiment analysis</p>
+                    </div>
+                </div>
+                
+                <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: transform 0.2s;">
+                    <img src="Screenshot 2025-11-09 075410_1762655117843.png" alt="Image analysis" style="width: 100%; height: auto; display: block;">
+                    <div style="padding: 16px;">
+                        <h4 style="font-weight: 600; margin-bottom: 8px; color: var(--gray-900);">🎨 Image Detection</h4>
+                        <p style="color: var(--gray-600); font-size: 0.9em;">47 images analyzed with AI likelihood scores</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 24px; background: white; border-radius: 12px; border: 2px solid var(--primary-200);">
+                <h3 style="color: var(--primary-700); font-weight: 600; margin-bottom: 12px;">📦 Extension Features Shown:</h3>
+                <ul style="list-style: none; padding-left: 0; color: var(--gray-700); line-height: 1.8;">
+                    <li style="padding: 6px 0;">✓ One-click page scanning from browser extension</li>
+                    <li style="padding: 6px 0;">✓ Real-time progress tracking with 8-step analysis pipeline</li>
+                    <li style="padding: 6px 0;">✓ AI text detection with confidence percentages</li>
+                    <li style="padding: 6px 0;">✓ Fact-checking with source verification</li>
+                    <li style="padding: 6px 0;">✓ Sentiment and tone analysis</li>
+                    <li style="padding: 6px 0;">✓ Bulk image AI detection (analyzed 47 images)</li>
+                    <li style="padding: 6px 0;">✓ Clean, professional UI with tabs (Overview, Analysis, Q&A, Settings)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        function updateStep(stepId, status) {
+            const step = document.getElementById(stepId);
+            if (!step) return;
+            
+            step.className = 'progress-step step-' + status;
+            const statusIcon = step.querySelector('.step-status');
+            
+            if (status === 'loading') {
+                statusIcon.innerHTML = '<div class="spinner"></div>';
+            } else if (status === 'completed') {
+                statusIcon.textContent = '✓';
+            } else if (status === 'error') {
+                statusIcon.textContent = '✗';
+            }
+        }
+
+        async function scanPage() {
+            const url = document.getElementById('pageUrl').value;
+            const progress = document.getElementById('scanProgress');
+            const results = document.getElementById('scanResults');
+            
+            if (!url.trim()) {
+                alert('Please enter a URL to scan');
+                return;
+            }
+
+            // Reset and show progress
+            progress.classList.add('show');
+            results.classList.remove('show');
+            
+            // Reset all steps
+            ['step-scrape', 'step-ai', 'step-fact', 'step-sentiment', 'step-images'].forEach(id => {
+                updateStep(id, 'pending');
+            });
+
+            let scrapedData = null;
+            let aiData = null;
+            let factData = null;
+            let sentimentData = null;
+            let imageData = [];
+
+            try {
+                // Step 1: Scrape
+                updateStep('step-scrape', 'loading');
+                const scrapeRes = await fetch(`${API_BASE}/api/scrape`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                scrapedData = await scrapeRes.json();
+                
+                if (!scrapeRes.ok || scrapedData.error) {
+                    updateStep('step-scrape', 'error');
+                    alert(`⚠️ Scraping Error:\n\n${scrapedData.error || 'Failed to scrape the page'}\n\nTip: Some websites block automated access. Try simpler websites like Wikipedia, news sites, or blogs for best results.`);
+                    throw new Error('Scraping failed');
+                }
+                
+                updateStep('step-scrape', 'completed');
+
+                if (scrapedData.text) {
+                    // Step 2: AI Detection
+                    updateStep('step-ai', 'loading');
+                    try {
+                        const aiRes = await fetch(`${API_BASE}/api/detect`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text: scrapedData.text })
+                        });
+                        aiData = await aiRes.json();
+                        updateStep('step-ai', aiRes.ok ? 'completed' : 'error');
+                    } catch (err) {
+                        updateStep('step-ai', 'error');
+                    }
+
+                    // Step 3: Fact Check
+                    updateStep('step-fact', 'loading');
+                    try {
+                        const factRes = await fetch(`${API_BASE}/api/factcheck`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text: scrapedData.text })
+                        });
+                        factData = await factRes.json();
+                        updateStep('step-fact', factRes.ok ? 'completed' : 'error');
+                    } catch (err) {
+                        updateStep('step-fact', 'error');
+                    }
+
+                    // Step 4: Sentiment
+                    updateStep('step-sentiment', 'loading');
+                    try {
+                        const sentimentRes = await fetch(`${API_BASE}/api/sentiment`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text: scrapedData.text })
+                        });
+                        sentimentData = await sentimentRes.json();
+                        updateStep('step-sentiment', sentimentRes.ok ? 'completed' : 'error');
+                    } catch (err) {
+                        updateStep('step-sentiment', 'error');
+                    }
+
+                    // Step 5: Image Analysis
+                    if (scrapedData.images && scrapedData.images.length > 0) {
+                        updateStep('step-images', 'loading');
+                        try {
+                            const imagePromises = scrapedData.images.slice(0, 5).map(imgUrl =>
+                                fetch(`${API_BASE}/api/image-detect-ai`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ url: imgUrl })
+                                }).then(res => res.json()).catch(() => null)
+                            );
+                            imageData = (await Promise.all(imagePromises)).filter(d => d);
+                            updateStep('step-images', 'completed');
+                        } catch (err) {
+                            updateStep('step-images', 'error');
+                        }
+                    } else {
+                        updateStep('step-images', 'completed');
+                    }
+                }
+
+                // Display Results
+                if (aiData) {
+                    const score = aiData.aiLikelihoodPercent;
+                    const scoreEl = document.getElementById('scanAiScore');
+                    scoreEl.textContent = `${score}%`;
+                    scoreEl.className = 'score-badge ' + getScoreClass(score);
+                    document.getElementById('scanAiDetails').textContent = 
+                        `AI likelihood: ${score >= 70 ? 'High' : score >= 40 ? 'Medium' : 'Low'}`;
+                }
+
+                if (factData && factData.claims) {
+                    const falseClaims = factData.claims.filter(c => !c.isLikelyTrue).length;
+                    const totalClaims = factData.claims.length;
+                    const fakePercent = totalClaims > 0 ? Math.round((falseClaims / totalClaims) * 100) : 0;
+                    const scoreEl = document.getElementById('scanFactScore');
+                    scoreEl.textContent = `${fakePercent}%`;
+                    scoreEl.className = 'score-badge ' + getScoreClass(fakePercent);
+                    document.getElementById('scanFactDetails').textContent = 
+                        `${falseClaims} of ${totalClaims} claims appear false`;
+                }
+
+                if (sentimentData && sentimentData.summary) {
+                    document.getElementById('scanSentimentDetails').textContent = 
+                        sentimentData.summary.substring(0, 150) + '...';
+                }
+
+                if (imageData.length > 0) {
+                    const avgAi = Math.round(
+                        imageData.reduce((sum, img) => sum + (img.aiLikelihoodPercent || 0), 0) / imageData.length
+                    );
+                    document.getElementById('scanImageDetails').textContent = 
+                        `${imageData.length} images analyzed - Avg AI: ${avgAi}%`;
+                } else {
+                    document.getElementById('scanImageDetails').textContent = 'No images found';
+                }
+
+                // Full data - Format nicely instead of JSON
+                let fullDataHTML = '<div style="line-height: 1.8;">';
+                
+                // AI Detection Section
+                if (aiData) {
+                    fullDataHTML += `
+                        <div style="margin-bottom: 20px; padding: 16px; background: white; border-radius: 8px;">
+                            <h4 style="margin-bottom: 10px; color: var(--primary-700);">🤖 AI Detection Analysis</h4>
+                            <p><strong>AI Likelihood:</strong> ${aiData.aiLikelihoodPercent}%</p>
+                            <p><strong>Text Preview:</strong> ${aiData.textPreview || scrapedData.text.substring(0, 200) + '...'}</p>
+                        </div>
+                    `;
+                }
+                
+                // Fact Check Section
+                if (factData && factData.claims && factData.claims.length > 0) {
+                    fullDataHTML += `
+                        <div style="margin-bottom: 20px; padding: 16px; background: white; border-radius: 8px;">
+                            <h4 style="margin-bottom: 10px; color: var(--primary-700);">✅ Fact Check Results</h4>
+                            <p><strong>Total Claims Found:</strong> ${factData.claims.length}</p>
+                    `;
+                    
+                    factData.claims.forEach((claim, index) => {
+                        const status = claim.isLikelyTrue === true ? '✅ TRUE' : claim.isLikelyTrue === false ? '❌ FALSE' : '❓ UNCERTAIN';
+                        const statusColor = claim.isLikelyTrue === true ? 'var(--success)' : claim.isLikelyTrue === false ? 'var(--danger)' : 'var(--warning)';
+                        
+                        fullDataHTML += `
+                            <div style="margin-top: 12px; padding: 12px; background: var(--gray-50); border-radius: 6px; border-left: 3px solid ${statusColor};">
+                                <p style="margin-bottom: 6px;"><strong>Claim ${index + 1}:</strong> ${claim.claim}</p>
+                                <p style="color: ${statusColor}; font-weight: 600;">${status}</p>
+                            </div>
+                        `;
+                    });
+                    
+                    fullDataHTML += '</div>';
+                }
+                
+                // Sentiment Section
+                if (sentimentData && sentimentData.summary) {
+                    fullDataHTML += `
+                        <div style="margin-bottom: 20px; padding: 16px; background: white; border-radius: 8px;">
+                            <h4 style="margin-bottom: 10px; color: var(--primary-700);">😊 Sentiment Analysis</h4>
+                            <p>${sentimentData.summary}</p>
+                        </div>
+                    `;
+                }
+                
+                // Images Section
+                if (imageData.length > 0) {
+                    const avgAi = Math.round(
+                        imageData.reduce((sum, img) => sum + (img.aiLikelihoodPercent || 0), 0) / imageData.length
+                    );
+                    fullDataHTML += `
+                        <div style="margin-bottom: 20px; padding: 16px; background: white; border-radius: 8px;">
+                            <h4 style="margin-bottom: 10px; color: var(--primary-700);">🎨 Image Analysis</h4>
+                            <p><strong>Images Analyzed:</strong> ${imageData.length}</p>
+                            <p><strong>Average AI Likelihood:</strong> ${avgAi}%</p>
+                        </div>
+                    `;
+                }
+                
+                // Scraped Info Section
+                if (scrapedData) {
+                    fullDataHTML += `
+                        <div style="margin-bottom: 20px; padding: 16px; background: white; border-radius: 8px;">
+                            <h4 style="margin-bottom: 10px; color: var(--primary-700);">📄 Page Information</h4>
+                            <p><strong>URL:</strong> <a href="${scrapedData.url}" target="_blank" style="color: var(--primary-600);">${scrapedData.url}</a></p>
+                            <p><strong>Text Length:</strong> ${scrapedData.text.length} characters</p>
+                            <p><strong>Images Found:</strong> ${scrapedData.images.length}</p>
+                        </div>
+                    `;
+                }
+                
+                fullDataHTML += '</div>';
+                document.getElementById('scanFullData').innerHTML = fullDataHTML;
+
+                results.classList.add('show');
+
+            } catch (error) {
+                alert('Error during scan: ' + error.message);
+            }
+        }
+
+        function getScoreClass(score) {
+            if (score >= 70) return 'score-high';
+            if (score >= 40) return 'score-medium';
+            return 'score-low';
+        }
+
+        async function detectAI() {
+            const text = document.getElementById('detectText').value;
+            const loading = document.getElementById('detectLoading');
+            const error = document.getElementById('detectError');
+            const result = document.getElementById('detectResult');
+            
+            if (!text.trim()) {
+                showError('detectError', 'Please enter some text to analyze');
+                return;
+            }
+
+            loading.classList.add('show');
+            error.classList.remove('show');
+            result.classList.remove('show');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/detect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                const data = await response.json();
+                loading.classList.remove('show');
+                
+                if (response.ok) {
+                    const score = data.aiLikelihoodPercent;
+                    const scoreEl = document.getElementById('detectScore');
+                    scoreEl.textContent = `${score}% AI Likelihood`;
+                    scoreEl.className = 'score-badge ' + getScoreClass(score);
+                    
+                    // Format the details nicely
+                    let detailsHTML = `
+                        <div style="line-height: 1.8;">
+                            <p style="margin-bottom: 12px;"><strong>📊 Analysis Results:</strong></p>
+                            <p><strong>AI Likelihood:</strong> ${score}%</p>
+                            ${data.explanation ? `<p style="margin-top: 10px;"><strong>Explanation:</strong><br>${data.explanation}</p>` : ''}
+                            ${data.model ? `<p style="margin-top: 10px; color: var(--gray-500); font-size: 0.9em;">Model: ${data.model}</p>` : ''}
+                        </div>
+                    `;
+                    
+                    document.getElementById('detectDetails').innerHTML = detailsHTML;
+                    result.classList.add('show');
+                } else {
+                    showError('detectError', data.error || 'Detection failed');
+                }
+            } catch (err) {
+                loading.classList.remove('show');
+                showError('detectError', 'Error: ' + err.message);
+            }
+        }
+
+        async function factCheck() {
+            const text = document.getElementById('factText').value;
+            const loading = document.getElementById('factLoading');
+            const error = document.getElementById('factError');
+            const result = document.getElementById('factResult');
+            
+            if (!text.trim()) {
+                showError('factError', 'Please enter text to fact-check');
+                return;
+            }
+
+            loading.classList.add('show');
+            error.classList.remove('show');
+            result.classList.remove('show');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/factcheck`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                const data = await response.json();
+                loading.classList.remove('show');
+                
+                if (response.ok) {
+                    // Format fact check results nicely
+                    let detailsHTML = '<div style="line-height: 1.8;">';
+                    
+                    if (data.claims && data.claims.length > 0) {
+                        detailsHTML += `<p style="margin-bottom: 16px;"><strong>📋 Found ${data.claims.length} claim(s):</strong></p>`;
+                        
+                        data.claims.forEach((claim, index) => {
+                            const status = claim.isLikelyTrue === true ? '✅ TRUE' : claim.isLikelyTrue === false ? '❌ FALSE' : '❓ UNCERTAIN';
+                            const statusColor = claim.isLikelyTrue === true ? 'var(--success)' : claim.isLikelyTrue === false ? 'var(--danger)' : 'var(--warning)';
+                            
+                            detailsHTML += `
+                                <div style="margin-bottom: 20px; padding: 16px; background: white; border-radius: 8px; border-left: 4px solid ${statusColor};">
+                                    <p style="margin-bottom: 8px;"><strong>Claim ${index + 1}:</strong> ${claim.claim}</p>
+                                    <p style="color: ${statusColor}; font-weight: 600; margin-bottom: 8px;">${status}</p>
+                                    ${claim.supportingSources && claim.supportingSources.length > 0 ? `
+                                        <p style="margin-top: 10px; margin-bottom: 6px; font-size: 0.9em;"><strong>Sources:</strong></p>
+                                        <ul style="margin-left: 20px; font-size: 0.9em;">
+                                            ${claim.supportingSources.map(source => `
+                                                <li style="margin-bottom: 4px;">
+                                                    <a href="${source.link}" target="_blank" style="color: var(--primary-600);">${source.title}</a>
+                                                </li>
+                                            `).join('')}
+                                        </ul>
+                                    ` : '<p style="margin-top: 8px; font-size: 0.9em; color: var(--gray-500);">No web sources available (using AI verification)</p>'}
+                                </div>
+                            `;
+                        });
+                    } else {
+                        detailsHTML += '<p>No claims found in the text.</p>';
+                    }
+                    
+                    detailsHTML += '</div>';
+                    document.getElementById('factDetails').innerHTML = detailsHTML;
+                    result.classList.add('show');
+                } else {
+                    showError('factError', data.error || 'Fact check failed');
+                }
+            } catch (err) {
+                loading.classList.remove('show');
+                showError('factError', 'Error: ' + err.message);
+            }
+        }
+
+        async function analyzeSentiment() {
+            const text = document.getElementById('sentimentText').value;
+            const loading = document.getElementById('sentimentLoading');
+            const error = document.getElementById('sentimentError');
+            const result = document.getElementById('sentimentResult');
+            
+            if (!text.trim()) {
+                showError('sentimentError', 'Please enter text to analyze');
+                return;
+            }
+
+            loading.classList.add('show');
+            error.classList.remove('show');
+            result.classList.remove('show');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/sentiment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                const data = await response.json();
+                loading.classList.remove('show');
+                
+                if (response.ok) {
+                    // Format sentiment results nicely
+                    let detailsHTML = `
+                        <div style="line-height: 1.8;">
+                            <p style="margin-bottom: 12px;"><strong>😊 Sentiment Analysis:</strong></p>
+                            <div style="padding: 16px; background: white; border-radius: 8px; border-left: 4px solid var(--primary-500);">
+                                <p style="font-size: 1.1em;">${data.summary || 'Analysis complete'}</p>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('sentimentDetails').innerHTML = detailsHTML;
+                    result.classList.add('show');
+                } else {
+                    showError('sentimentError', data.error || 'Sentiment analysis failed');
+                }
+            } catch (err) {
+                loading.classList.remove('show');
+                showError('sentimentError', 'Error: ' + err.message);
+            }
+        }
+
+        async function summarize() {
+            const text = document.getElementById('summarizeText').value;
+            const loading = document.getElementById('summarizeLoading');
+            const error = document.getElementById('summarizeError');
+            const result = document.getElementById('summarizeResult');
+            
+            if (!text.trim()) {
+                showError('summarizeError', 'Please enter text to summarize');
+                return;
+            }
+
+            loading.classList.add('show');
+            error.classList.remove('show');
+            result.classList.remove('show');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/summarize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: text })
+                });
+
+                const data = await response.json();
+                loading.classList.remove('show');
+                
+                if (response.ok && data.success) {
+                    // Format summarization results nicely
+                    let detailsHTML = `
+                        <div style="line-height: 1.8;">
+                            <p style="margin-bottom: 12px;"><strong>📝 Summary:</strong></p>
+                            <div style="padding: 16px; background: white; border-radius: 8px; border-left: 4px solid var(--primary-500);">
+                                <p style="white-space: pre-wrap;">${data.summary || 'Summary generated'}</p>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('summarizeDetails').innerHTML = detailsHTML;
+                    result.classList.add('show');
+                } else {
+                    showError('summarizeError', data.error || 'Summarization failed');
+                }
+            } catch (err) {
+                loading.classList.remove('show');
+                showError('summarizeError', 'Error: ' + err.message);
+            }
+        }
+
+        async function detectImage() {
+            const url = document.getElementById('imageUrl').value;
+            const loading = document.getElementById('imageLoading');
+            const error = document.getElementById('imageError');
+            const result = document.getElementById('imageResult');
+            
+            if (!url.trim()) {
+                showError('imageError', 'Please enter an image URL');
+                return;
+            }
+
+            loading.classList.add('show');
+            error.classList.remove('show');
+            result.classList.remove('show');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/image-detect-ai`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+                loading.classList.remove('show');
+                
+                if (response.ok) {
+                    const score = data.aiLikelihoodPercent;
+                    const scoreEl = document.getElementById('imageScore');
+                    scoreEl.textContent = `${score}% AI Generated`;
+                    scoreEl.className = 'score-badge ' + getScoreClass(score);
+                    
+                    // Format image detection results nicely
+                    let detailsHTML = `
+                        <div style="line-height: 1.8;">
+                            <p style="margin-bottom: 12px;"><strong>🖼️ Image Analysis Results:</strong></p>
+                            <p><strong>AI Likelihood:</strong> ${score}%</p>
+                            ${data.explanation ? `<p style="margin-top: 10px;"><strong>Explanation:</strong><br>${data.explanation}</p>` : ''}
+                            ${data.analysis ? `<p style="margin-top: 10px;"><strong>Analysis:</strong><br>${data.analysis}</p>` : ''}
+                            ${data.model ? `<p style="margin-top: 10px; color: var(--gray-500); font-size: 0.9em;">Model: ${data.model}</p>` : ''}
+                        </div>
+                    `;
+                    
+                    document.getElementById('imageDetails').innerHTML = detailsHTML;
+                    result.classList.add('show');
+                } else {
+                    showError('imageError', data.error || 'Image detection failed');
+                }
+            } catch (err) {
+                loading.classList.remove('show');
+                showError('imageError', 'Error: ' + err.message);
+            }
+        }
+
+        function showError(elementId, message) {
+            const error = document.getElementById(elementId);
+            error.textContent = message;
+            error.classList.add('show');
+        }
+    </script>
+</body>
+</html>

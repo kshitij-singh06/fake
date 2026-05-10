@@ -1,0 +1,24 @@
+{
+  "name": "truthscan-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.11.0",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "exif-parser": "^0.1.12",
+    "express": "^5.1.0",
+    "i": "^0.3.7",
+    "image-type": "^6.0.0",
+    "puppeteer": "^24.15.0"
+  }
+}

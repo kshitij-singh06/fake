@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "TruthScan",
+  "version": "1.0.0",
+  "description": "AI-powered content verification — detects AI-generated text, fake news, and misinformation on any webpage.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TruthScan — AI & Misinformation Detector"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
