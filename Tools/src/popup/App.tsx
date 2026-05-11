@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react'
 import {
   Shield, AlertTriangle, CheckCircle, Info, Moon, Sun,
   Settings, Zap, Eye, BarChart3, HelpCircle, Loader2,
-  FileText, ExternalLink,
+  FileText, ExternalLink, Cpu, Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -15,7 +15,14 @@ import {
   SummarizationResult,
   QAResult,
 } from '@/lib/api'
-import { detectAILocally, isModelReady, warmUpModel } from '@/lib/localInference'
+import {
+  detectAILocally,
+  detectFakeNewsLocally,
+  isFakeModelReady,
+  isModelReady,
+  warmUpFakeModel,
+  warmUpModel,
+} from '@/lib/localInference'
 import ScanPipeline, { PipelineStage } from '@/components/AnalysisProgress'
 import DiagnosticsPanel from '@/components/DebugPanel'
 
@@ -59,6 +66,14 @@ function resolveAIRiskColor(pct: number): string {
   return 'text-emerald-400'
 }
 
+function labelFakeRisk(pct: number): string {
+  if (pct >= 80) return 'Very High'
+  if (pct >= 60) return 'High'
+  if (pct >= 40) return 'Moderate'
+  if (pct >= 20) return 'Low'
+  return 'Very Low'
+}
+
 
 function resolveRiskIcon(risk: string) {
   if (risk === 'low') return <CheckCircle className="w-4 h-4 text-emerald-400" />
@@ -68,48 +83,112 @@ function resolveRiskIcon(risk: string) {
 
 // ─── AppHeader ────────────────────────────────────────────────────────────────
 
+type InferenceMode = 'local' | 'api'
+
 interface AppHeaderProps {
   darkMode: boolean
   serverOnline: boolean | null
+  fakeModelOnline: boolean | null
+  inferenceMode: InferenceMode
   onToggleTheme: () => void
+  onToggleMode: () => void
 }
 
-function AppHeader({ darkMode, serverOnline, onToggleTheme }: AppHeaderProps) {
+function AppHeader({ darkMode, serverOnline, fakeModelOnline, inferenceMode, onToggleTheme, onToggleMode }: AppHeaderProps) {
+  const isLocal = inferenceMode === 'local'
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-b border-purple-500/20 bg-purple-900/10 flex-shrink-0">
-      <div className="flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30 flex-shrink-0">
-          <Shield className="w-4 h-4 text-white" />
+    <div className="flex-shrink-0 border-b border-purple-500/20 bg-purple-900/10">
+      {/* Top row: logo + status dots + theme toggle */}
+      <div className="flex items-center justify-between px-4 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30 flex-shrink-0">
+            <Shield className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <h1 className="text-sm font-bold text-white tracking-wide leading-tight">TruthScan</h1>
+            <p className="text-[10px] text-purple-300 leading-tight">AI & Misinformation Detector</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-sm font-bold text-white tracking-wide leading-tight">TruthScan</h1>
-          <p className="text-[10px] text-purple-300 leading-tight">AI & Misinformation Detector</p>
+        <div className="flex items-center gap-2">
+          {/* Status dots */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1" title="AI model status">
+              {serverOnline === null ? (
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-pulse" />
+              ) : (
+                <div
+                  className={cn('w-2 h-2 rounded-full', serverOnline ? 'bg-emerald-400' : 'bg-red-400')}
+                  style={serverOnline ? { boxShadow: '0 0 6px rgba(52,211,153,0.6)' } : {}}
+                />
+              )}
+              <span className={cn('text-[10px] font-medium', serverOnline ? 'text-emerald-400' : 'text-red-400')}>AI</span>
+            </div>
+            <div className="flex items-center gap-1" title="Fake-news model status">
+              {fakeModelOnline === null ? (
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-pulse" />
+              ) : (
+                <div
+                  className={cn('w-2 h-2 rounded-full', fakeModelOnline ? 'bg-emerald-400' : 'bg-red-400')}
+                  style={fakeModelOnline ? { boxShadow: '0 0 6px rgba(52,211,153,0.6)' } : {}}
+                />
+              )}
+              <span className={cn('text-[10px] font-medium', fakeModelOnline ? 'text-emerald-400' : 'text-red-400')}>Fake</span>
+            </div>
+          </div>
+          <button
+            onClick={onToggleTheme}
+            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-slate-400 hover:text-white"
+            title="Toggle theme"
+          >
+            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5">
-          {serverOnline === null && (
-            <div className="w-2 h-2 bg-slate-500 rounded-full animate-pulse" title="Loading local model..." />
-          )}
-          {serverOnline === true && (
-            <div className="flex items-center gap-1" title="Local AI model ready">
-              <div className="w-2 h-2 bg-emerald-400 rounded-full" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.6)' }} />
-              <span className="text-[10px] text-emerald-400 font-medium">Local</span>
-            </div>
-          )}
-          {serverOnline === false && (
-            <div className="flex items-center gap-1" title="Local model not found">
-              <div className="w-2 h-2 bg-red-400 rounded-full" />
-              <span className="text-[10px] text-red-400 font-medium">No Model</span>
-            </div>
-          )}
-        </div>
+
+      {/* Mode toggle pill */}
+      <div className="flex items-center justify-center pb-2.5 px-4">
         <button
-          onClick={onToggleTheme}
-          className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-slate-400 hover:text-white"
-          title="Toggle theme"
+          onClick={onToggleMode}
+          title={isLocal ? 'Switch to API mode (requires backend server)' : 'Switch to Local mode (offline, no server needed)'}
+          className={cn(
+            'relative flex items-center rounded-full p-0.5 transition-all duration-300 w-48',
+            isLocal
+              ? 'bg-gradient-to-r from-violet-600/40 to-indigo-600/40 border border-violet-500/40'
+              : 'bg-gradient-to-r from-sky-600/40 to-cyan-600/40 border border-sky-500/40'
+          )}
+          style={isLocal
+            ? { boxShadow: '0 0 12px rgba(124,58,237,0.25)' }
+            : { boxShadow: '0 0 12px rgba(14,165,233,0.25)' }
+          }
         >
-          {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {/* Sliding indicator */}
+          <span
+            className={cn(
+              'absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded-full transition-all duration-300 ease-in-out',
+              isLocal
+                ? 'left-0.5 bg-gradient-to-r from-violet-500 to-indigo-500 shadow-lg'
+                : 'left-[calc(50%+2px)] bg-gradient-to-r from-sky-500 to-cyan-500 shadow-lg'
+            )}
+            style={isLocal
+              ? { boxShadow: '0 0 8px rgba(124,58,237,0.5)' }
+              : { boxShadow: '0 0 8px rgba(14,165,233,0.5)' }
+            }
+          />
+          {/* Labels */}
+          <span className={cn(
+            'relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold transition-colors duration-300',
+            isLocal ? 'text-white' : 'text-slate-400'
+          )}>
+            <Cpu className="w-3 h-3" />
+            Local
+          </span>
+          <span className={cn(
+            'relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold transition-colors duration-300',
+            !isLocal ? 'text-white' : 'text-slate-400'
+          )}>
+            <Globe className="w-3 h-3" />
+            API
+          </span>
         </button>
       </div>
     </div>
@@ -163,15 +242,23 @@ interface OverviewTabProps {
   summaryData: SummarizationResult | null
   pipelineStages: PipelineStage[]
   serverOnline: boolean | null
+  fakeModelOnline: boolean | null
+  inferenceMode: InferenceMode
   onScan: () => void
   onSummarize: () => void
 }
 
 function OverviewTab({
   report, scanInProgress, summarizeInProgress, summaryData,
-  pipelineStages, serverOnline, onScan, onSummarize,
+  pipelineStages, serverOnline, fakeModelOnline, inferenceMode, onScan, onSummarize,
 }: OverviewTabProps) {
   const activeSummary = summaryData ?? report?.apiData?.summarizationResult
+  const isLocal = inferenceMode === 'local'
+  // Only show local-model warnings when actually in local mode
+  const missingModels: string[] = []
+  if (isLocal && serverOnline === false) missingModels.push('AI')
+  if (isLocal && fakeModelOnline === false) missingModels.push('Fake-news')
+  const hasMissingModels = missingModels.length > 0
 
   return (
     <div className="space-y-3">
@@ -228,14 +315,26 @@ function OverviewTab({
             {/* Score grid */}
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center">
-                <div className={cn('text-lg font-bold', resolveAIRiskColor(report.aiScore))}>
-                  {labelAIRisk(report.aiScore)}
+                {isLocal ? (
+                  // Local model: show risk label (scores are calibrated, not raw %)
+                  <div className={cn('text-lg font-bold', resolveAIRiskColor(report.aiScore))}>
+                    {labelAIRisk(report.aiScore)}
+                  </div>
+                ) : (
+                  // API mode: show the actual % returned by the LLM
+                  <div className={cn('text-lg font-bold', resolveAIRiskColor(report.aiScore))}>
+                    {report.aiScore}%
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-600 mt-0.5">
+                  {isLocal ? 'AI Risk Level · Local' : 'AI Likelihood · API'}
                 </div>
-                <div className="text-[10px] text-slate-600 mt-0.5">AI Risk Level</div>
               </div>
               <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center">
                 <div className="text-lg font-bold text-amber-400">{report.fakeNewsScore}%</div>
-                <div className="text-[10px] text-slate-600 mt-0.5">False Claims</div>
+                <div className="text-[10px] text-slate-600 mt-0.5">
+                  {isLocal ? 'False Claims · Local' : 'Misinformation · API'}
+                </div>
               </div>
             </div>
 
@@ -270,10 +369,14 @@ function OverviewTab({
               <Shield className="w-7 h-7 text-purple-400/40" />
             </div>
             <p className="text-sm text-slate-500 mb-1">Click "Scan Page" to analyze this webpage</p>
-            <p className="text-xs text-slate-700">AI detection · Fact-checking · Summarization</p>
-            {serverOnline === false && (
+            <p className="text-xs text-slate-700">
+              {isLocal
+                ? 'Offline · DistilBERT ONNX · No API key needed'
+                : 'API Mode · Gemini + Tavily fact-check · Requires server'}
+            </p>
+            {hasMissingModels && (
               <p className="text-xs text-red-400 mt-3 flex items-center justify-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" />Local model not found — reinstall extension
+                <AlertTriangle className="w-3.5 h-3.5" />Local model missing: {missingModels.join(', ')} — reinstall extension
               </p>
             )}
           </div>
@@ -647,6 +750,7 @@ function SettingsTab({ darkMode, onToggleTheme }: SettingsTabProps) {
 
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState(true)
+  const [inferenceMode, setInferenceMode] = useState<InferenceMode>('local')
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview')
   const [scanInProgress, setScanInProgress] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -659,19 +763,24 @@ const App: React.FC = () => {
   const [qaResponse, setQaResponse] = useState<QAResult | null>(null)
   const [userQuestion, setUserQuestion] = useState('')
   const [serverOnline, setServerOnline] = useState<boolean | null>(null)
+  const [fakeModelOnline, setFakeModelOnline] = useState<boolean | null>(null)
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([])
   const [imageExpanded, setImageExpanded] = useState(false)
 
   useEffect(() => {
-    chrome.storage.local.get(['theme'], (result) => {
+    chrome.storage.local.get(['theme', 'inferenceMode'], (result) => {
       const dark = result.theme !== 'light'
       setDarkMode(dark)
       document.documentElement.classList.toggle('dark', dark)
+      if (result.inferenceMode === 'api' || result.inferenceMode === 'local') {
+        setInferenceMode(result.inferenceMode)
+      }
     })
     verifyApiConnection()
     restoreSavedReport()
     // Preload model + tokenizer in background so first scan is faster
     warmUpModel().catch(() => {})
+    warmUpFakeModel().catch(() => {})
   }, [])
 
   const log = (msg: string) => console.log(`[TruthScan] ${msg}`)
@@ -684,10 +793,14 @@ const App: React.FC = () => {
     log('Checking local model availability...')
     try {
       const ready = await isModelReady()
+      const fakeReady = await isFakeModelReady()
       setServerOnline(ready)
-      log(`Local model: ${ready ? 'ready' : 'not found'}`)
+      setFakeModelOnline(fakeReady)
+      log(`Local AI model: ${ready ? 'ready' : 'not found'}`)
+      log(`Local fake-news model: ${fakeReady ? 'ready' : 'not found'}`)
     } catch {
       setServerOnline(false)
+      setFakeModelOnline(false)
     }
   }
 
@@ -700,6 +813,14 @@ const App: React.FC = () => {
     chrome.storage.local.set({ theme: nextDark ? 'dark' : 'light' })
   }
 
+  const toggleMode = () => {
+    const next: InferenceMode = inferenceMode === 'local' ? 'api' : 'local'
+    setInferenceMode(next)
+    setPageReport(null)  // clear stale results when switching modes
+    chrome.storage.local.set({ inferenceMode: next })
+    log(`Switched to ${next} mode`)
+  }
+
   // ── Pipeline Stage Management ─────────────────────────────────────────────
 
   const advanceStage = (stageId: string, status: PipelineStage['status'], error?: string) => {
@@ -708,16 +829,19 @@ const App: React.FC = () => {
     )
   }
 
-  const buildPipelineStages = (): PipelineStage[] => [
-    { id: 'get-url', title: 'Getting Page URL', description: 'Retrieving current tab URL', status: 'pending' },
-    { id: 'scrape-content', title: 'Extracting Content', description: 'Reading page text via content script', status: 'pending' },
-    { id: 'detect-ai', title: 'AI Detection', description: 'Running local ONNX model inference', status: 'pending' },
-    { id: 'fact-check', title: 'Fact Checking', description: 'No local model — skipped', status: 'pending' },
-    { id: 'sentiment', title: 'Sentiment Analysis', description: 'No local model — skipped', status: 'pending' },
-    { id: 'image-scan', title: 'Image Scanning', description: 'No local model — skipped', status: 'pending' },
-    { id: 'summarize', title: 'Summarizing', description: 'No local model — skipped', status: 'pending' },
-    { id: 'report', title: 'Building Report', description: 'Compiling risk assessment', status: 'pending' },
-  ]
+  const buildPipelineStages = (): PipelineStage[] => {
+    const isApi = inferenceMode === 'api'
+    return [
+      { id: 'get-url',        title: 'Getting Page URL',    description: 'Retrieving current tab URL',                                        status: 'pending' },
+      { id: 'scrape-content', title: 'Extracting Content',  description: 'Reading page text via content script',                               status: 'pending' },
+      { id: 'detect-ai',      title: 'AI Detection',        description: isApi ? 'Gemini LLM scoring via server'    : 'Local DistilBERT ONNX', status: 'pending' },
+      { id: 'fact-check',     title: 'Fact-Check',          description: isApi ? 'Tavily search + LLM verification' : 'Local DistilBERT ONNX', status: 'pending' },
+      { id: 'sentiment',      title: 'Sentiment Analysis',  description: isApi ? 'Gemini sentiment via server'      : 'Skipped — no local model', status: 'pending' },
+      { id: 'image-scan',     title: 'Image Scanning',      description: isApi ? 'AI image detection via server'    : 'Skipped — no local model', status: 'pending' },
+      { id: 'summarize',      title: 'Summarizing',         description: isApi ? 'Groq / Gemini summarization'      : 'Skipped — no local model', status: 'pending' },
+      { id: 'report',         title: 'Building Report',     description: 'Compiling risk assessment',                                          status: 'pending' },
+    ]
+  }
 
   // ── Report Persistence ────────────────────────────────────────────────────
 
@@ -749,22 +873,56 @@ const App: React.FC = () => {
     }
   }
 
+  /**
+   * Extracts page text by messaging the content script.
+   * Falls back to chrome.scripting.executeScript if the content script isn't
+   * loaded in the tab (e.g. tab was open before extension was reloaded).
+   */
   const extractPageContentFromContentScript = async (tabId: number) => {
-    const response = await chrome.tabs.sendMessage(tabId, { type: 'ANALYZE_PAGE' })
-    if (!response?.success || !response?.content?.text) {
-      throw new Error(response?.error || 'Content script returned no page text')
+    // ── Primary path: message the already-injected content script ──────────
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, { type: 'ANALYZE_PAGE' })
+      if (response?.success && response?.content?.text) {
+        const rawText = String(response.content.text).trim()
+        if (rawText) {
+          return { url: response.content.url || '', text: rawText, images: [] as string[] }
+        }
+      }
+    } catch (_msgErr) {
+      // "Could not establish connection" — content script not yet loaded.
+      log('Content script not reachable, falling back to scripting.executeScript...')
     }
 
-    const rawText = String(response.content.text || '').trim()
-    if (!rawText) {
-      throw new Error('Content script extracted empty text')
+    // ── Fallback: inject a one-shot function directly into the tab ──────────
+    // This works even when the tab was open before the extension was reloaded.
+    const [injectionResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const SELECTORS = [
+          'article', 'main', '[role="main"]',
+          '.content', '.post-content', '.entry-content',
+          '.article-content', '.story-content',
+        ]
+        let text = ''
+        for (const sel of SELECTORS) {
+          const el = document.querySelector(sel) as HTMLElement | null
+          if (el) { text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim(); break }
+        }
+        if (!text) {
+          text = ((document.body as HTMLElement).innerText || document.body.textContent || '')
+            .replace(/\s+/g, ' ').trim()
+        }
+        return { url: window.location.href, text: text.substring(0, 10000) }
+      },
+    })
+
+    const result = injectionResult?.result as { url: string; text: string } | null
+    if (!result?.text) {
+      throw new Error('Could not extract page content — try refreshing the page')
     }
 
-    return {
-      url: response.content.url || '',
-      text: rawText,
-      images: [] as string[],
-    }
+    log(`Fallback extraction: ${result.text.length} chars`)
+    return { url: result.url, text: result.text, images: [] as string[] }
   }
 
   // ── Page Scan Orchestration ───────────────────────────────────────────────
@@ -778,155 +936,233 @@ const App: React.FC = () => {
     let currentTab: chrome.tabs.Tab | undefined
     let scrapeResult: any = null
     let detectResult: any = null
+    let fakeDetectResult: any = null
     let factCheckResult: any = null
     let sentimentResult: any = null
     let imageResults: any[] = []
     let localSummary: SummarizationResult | null = null
     const scanEntries: ScanEntry[] = []
 
-    // Stage 1: Get active tab URL
     try {
-      advanceStage('get-url', 'loading')
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
-      currentTab = tabs[0]
-      if (!currentTab?.url) throw new Error('No active tab URL found')
-      advanceStage('get-url', 'completed')
-      log(`Scanning: ${currentTab.url}`)
-    } catch (err) {
-      advanceStage('get-url', 'error', err instanceof Error ? err.message : 'Unknown error')
-      setScanInProgress(false)
-      return
-    }
-
-    // Stage 2: Extract page content via content script (fully local, no server call)
-    advanceStage('scrape-content', 'loading')
-    if (currentTab.id) {
+      // Stage 1: Get active tab URL
       try {
-        scrapeResult = await extractPageContentFromContentScript(currentTab.id)
-        advanceStage('scrape-content', 'completed')
-        log(`Content extracted: ${scrapeResult.text.length} chars`)
+        advanceStage('get-url', 'loading')
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+        currentTab = tabs[0]
+        if (!currentTab?.url) throw new Error('No active tab URL found')
+        advanceStage('get-url', 'completed')
+        log(`Scanning: ${currentTab.url}`)
       } catch (err) {
-        advanceStage('scrape-content', 'error', err instanceof Error ? err.message : 'Content extraction failed')
-        log(`Content extraction failed: ${err}`)
+        advanceStage('get-url', 'error', err instanceof Error ? err.message : 'Unknown error')
+        return
       }
-    } else {
-      advanceStage('scrape-content', 'error', 'No tab ID — cannot extract content')
-    }
 
-    // Stage 3: AI text detection — local ONNX inference (no external API)
-    if (scrapeResult) {
-      advanceStage('detect-ai', 'loading')
-      try {
-        const localResult = await detectAILocally(scrapeResult.text)
-        detectResult = { textPreview: localResult.textPreview, aiLikelihoodPercent: localResult.aiLikelihoodPercent }
-        advanceStage('detect-ai', 'completed')
-        log(`Local AI score: ${localResult.aiLikelihoodPercent}%`)
-        scanEntries.push({
-          id: '1', type: 'ai-generated',
-          confidence: localResult.aiLikelihoodPercent,
-          description: `Local model: ${labelAIRisk(localResult.aiLikelihoodPercent).toLowerCase()} likelihood of AI generation (DistilBERT)`,
+      // Stage 2: Extract page content via content script (fully local, no server call)
+      advanceStage('scrape-content', 'loading')
+      if (currentTab.id) {
+        try {
+          scrapeResult = await extractPageContentFromContentScript(currentTab.id)
+          advanceStage('scrape-content', 'completed')
+          log(`Content extracted: ${scrapeResult.text.length} chars`)
+        } catch (err) {
+          advanceStage('scrape-content', 'error', err instanceof Error ? err.message : 'Content extraction failed')
+          log(`Content extraction failed: ${err}`)
+        }
+      } else {
+        advanceStage('scrape-content', 'error', 'No tab ID — cannot extract content')
+      }
+
+      // Stage 3: AI text detection
+      if (scrapeResult) {
+        advanceStage('detect-ai', 'loading')
+        try {
+          if (inferenceMode === 'local') {
+            // ── Local ONNX path ──────────────────────────────────────────────
+            const localResult = await detectAILocally(scrapeResult.text)
+            detectResult = { textPreview: localResult.textPreview, aiLikelihoodPercent: localResult.aiLikelihoodPercent }
+            advanceStage('detect-ai', 'completed')
+            log(`Local AI score: ${localResult.aiLikelihoodPercent}%`)
+            scanEntries.push({
+              id: '1', type: 'ai-generated',
+              confidence: localResult.aiLikelihoodPercent,
+              description: `Local model (DistilBERT): ${labelAIRisk(localResult.aiLikelihoodPercent).toLowerCase()} likelihood of AI generation`,
+              timestamp: new Date(),
+            })
+          } else {
+            // ── API path ─────────────────────────────────────────────────────
+            const apiResult = await _truthScanClient.runAiDetection(scrapeResult.text)
+            detectResult = { textPreview: apiResult.textPreview, aiLikelihoodPercent: apiResult.aiLikelihoodPercent }
+            advanceStage('detect-ai', 'completed')
+            log(`API AI score: ${apiResult.aiLikelihoodPercent}%`)
+            scanEntries.push({
+              id: '1', type: 'ai-generated',
+              confidence: apiResult.aiLikelihoodPercent,
+              description: `API model (Gemini): ${labelAIRisk(apiResult.aiLikelihoodPercent).toLowerCase()} likelihood of AI generation`,
+              timestamp: new Date(),
+            })
+          }
+        } catch (err) {
+          advanceStage('detect-ai', 'error', err instanceof Error ? err.message : 'AI detection failed')
+          scanEntries.push({ id: '1', type: 'ai-generated', confidence: 0, description: `AI detection failed (${inferenceMode} mode) — see console`, timestamp: new Date() })
+        }
+      } else {
+        advanceStage('detect-ai', 'error', 'No content — cannot run AI detection')
+        scanEntries.push({ id: '1', type: 'ai-generated', confidence: 0, description: 'AI detection skipped — no content extracted', timestamp: new Date() })
+      }
+
+      // Stage 4: Fake news detection
+      if (scrapeResult) {
+        advanceStage('fact-check', 'loading')
+        try {
+          if (inferenceMode === 'local') {
+            // ── Local ONNX path ──────────────────────────────────────────────
+            const localFakeResult = await detectFakeNewsLocally(scrapeResult.text)
+            fakeDetectResult = { textPreview: localFakeResult.textPreview, fakeLikelihoodPercent: localFakeResult.fakeLikelihoodPercent }
+            advanceStage('fact-check', 'completed')
+            log(`Local fake-news score: ${localFakeResult.fakeLikelihoodPercent}%`)
+            scanEntries.push({
+              id: '2', type: 'fake-news',
+              confidence: localFakeResult.fakeLikelihoodPercent,
+              description: `Local model (DistilBERT): ${labelFakeRisk(localFakeResult.fakeLikelihoodPercent).toLowerCase()} likelihood of fake news`,
+              timestamp: new Date(),
+            })
+          } else {
+            // ── API path ─────────────────────────────────────────────────────
+            const apiFactResult = await _truthScanClient.verifyFacts(scrapeResult.text)
+            const fakePct = _truthScanClient.computeMisinfoScore(apiFactResult.claims)
+            fakeDetectResult = { textPreview: scrapeResult.text.slice(0, 200), fakeLikelihoodPercent: fakePct }
+            factCheckResult = apiFactResult
+            advanceStage('fact-check', 'completed')
+            log(`API fact-check misinformation score: ${fakePct}%`)
+            scanEntries.push({
+              id: '2', type: 'fake-news',
+              confidence: fakePct,
+              description: `API fact-check (Google Search): ${apiFactResult.claims.length} claims verified`,
+              timestamp: new Date(),
+            })
+          }
+        } catch (err) {
+          advanceStage('fact-check', 'error', err instanceof Error ? err.message : 'Fake-news detection failed')
+          scanEntries.push({ id: '2', type: 'fake-news', confidence: 0, description: `Fake-news detection failed (${inferenceMode} mode) — see console`, timestamp: new Date() })
+        }
+      } else {
+        advanceStage('fact-check', 'error', 'No content — cannot run fake-news detection')
+        scanEntries.push({ id: '2', type: 'fake-news', confidence: 0, description: 'Fake-news detection skipped — no content extracted', timestamp: new Date() })
+      }
+
+      // Stage 5: Sentiment analysis — no local model available, skip gracefully
+      advanceStage('sentiment', 'completed')
+      log('Sentiment skipped — no local model')
+
+      // Stage 6: Image AI detection — no local model available, skip gracefully
+      advanceStage('image-scan', 'completed')
+      log('Image scan skipped — no local model')
+
+      // Stage 7: Summarization — no local model available, skip gracefully
+      advanceStage('summarize', 'completed')
+      log('Summarization skipped — no local model')
+
+      // Stage 8: Compile report
+      advanceStage('report', 'loading')
+
+      const aiScore = detectResult?.aiLikelihoodPercent ?? 0
+      const fakeNewsScore = fakeDetectResult?.fakeLikelihoodPercent ?? 0
+      let overallRisk: 'low' | 'medium' | 'high' = 'low'
+      if (aiScore > 70 || fakeNewsScore > 70) overallRisk = 'high'
+      else if (aiScore > 40 || fakeNewsScore > 40) overallRisk = 'medium'
+
+      const report: PageReport = {
+        url: scrapeResult?.url ?? currentTab.url,
+        title: currentTab.title ?? 'Unknown',
+        aiScore,
+        fakeNewsScore,
+        overallRisk,
+        results: scanEntries,
+        factCheckClaims: factCheckResult?.claims ?? [],
+        apiData: {
+          scrapedData: scrapeResult ?? { url: currentTab.url, text: '', images: [] },
+          detectionResult: detectResult ?? { textPreview: '', aiLikelihoodPercent: 0 },
+          factCheckResult: factCheckResult ?? undefined,
+          sentimentResult: sentimentResult ?? undefined,
+          summarizationResult: localSummary ?? undefined,
+          imageDetectionResults: imageResults,
           timestamp: new Date(),
-        })
-      } catch (err) {
-        advanceStage('detect-ai', 'error', err instanceof Error ? err.message : 'Local AI detection failed')
-        scanEntries.push({ id: '1', type: 'ai-generated', confidence: 0, description: 'Local AI detection failed — see console for details', timestamp: new Date() })
+        },
       }
-    } else {
-      advanceStage('detect-ai', 'error', 'No content — cannot run AI detection')
-      scanEntries.push({ id: '1', type: 'ai-generated', confidence: 0, description: 'AI detection skipped — no content extracted', timestamp: new Date() })
+
+      setPageReport(report)
+      await persistReport(report)
+      advanceStage('report', 'completed')
+      log('Scan complete')
+    } catch (fatalErr) {
+      // Safety net — catches any unexpected error that escaped the inner try/catch blocks
+      log(`Fatal scan error: ${fatalErr}`)
+      console.error('[TruthScan] Unexpected scan failure:', fatalErr)
+    } finally {
+      // Always reset progress flag so the button re-enables
+      setScanInProgress(false)
     }
-
-    // Stage 4: Fact checking — no local model available, skip gracefully
-    // NOTE: truthScanClient.verifyFacts() is preserved in api.ts for future use.
-    advanceStage('fact-check', 'completed')
-    scanEntries.push({
-      id: '2', type: 'fake-news',
-      confidence: 0,
-      description: 'Fact-check model not available offline — result not computed',
-      timestamp: new Date(),
-    })
-    log('Fact check skipped — no local model')
-
-    // Stage 5: Sentiment analysis — no local model available, skip gracefully
-    advanceStage('sentiment', 'completed')
-    log('Sentiment skipped — no local model')
-
-    // Stage 6: Image AI detection — no local model available, skip gracefully
-    advanceStage('image-scan', 'completed')
-    log('Image scan skipped — no local model')
-
-    // Stage 7: Summarization — no local model available, skip gracefully
-    advanceStage('summarize', 'completed')
-    log('Summarization skipped — no local model')
-
-    // Stage 8: Compile report
-    advanceStage('report', 'loading')
-
-    const aiScore = detectResult?.aiLikelihoodPercent ?? 0
-    // fakeNewsScore is 0 when no local fact-check model is available
-    const fakeNewsScore = 0
-    let overallRisk: 'low' | 'medium' | 'high' = 'low'
-    if (aiScore > 70) overallRisk = 'high'
-    else if (aiScore > 40) overallRisk = 'medium'
-
-    const report: PageReport = {
-      url: scrapeResult?.url ?? currentTab.url,
-      title: currentTab.title ?? 'Unknown',
-      aiScore,
-      fakeNewsScore,
-      overallRisk,
-      results: scanEntries,
-      factCheckClaims: factCheckResult?.claims ?? [],
-      apiData: {
-        scrapedData: scrapeResult ?? { url: currentTab.url, text: '', images: [] },
-        detectionResult: detectResult ?? { textPreview: '', aiLikelihoodPercent: 0 },
-        factCheckResult: factCheckResult ?? undefined,
-        sentimentResult: sentimentResult ?? undefined,
-        summarizationResult: localSummary ?? undefined,
-        imageDetectionResults: imageResults,
-        timestamp: new Date(),
-      },
-    }
-
-    setPageReport(report)
-    await persistReport(report)
-    advanceStage('report', 'completed')
-    log('Scan complete')
-    setScanInProgress(false)
   }
 
   // ── Standalone Summarize ──────────────────────────────────────────────────
-  // NOTE: truthScanClient.generateSummary() is preserved in api.ts.
-  // No local summarization model is available — run a scan instead.
 
   const triggerSummarize = async () => {
     if (!pageReport?.apiData?.scrapedData?.text) {
       await triggerPageScan()
       return
     }
-    // No local summarization model; inform the user gracefully.
-    log('Summarization skipped — no local model available')
+    if (inferenceMode === 'api') {
+      // API mode: call the Groq/Gemini summarization endpoint
+      _setSummarizeInProgress(true)
+      try {
+        const result = await _truthScanClient.generateSummary(pageReport.apiData.scrapedData.text)
+        _setSummaryData(result)
+        log(`Summary generated: ${result.summary_length} chars via ${result.model}`)
+      } catch (err) {
+        log(`Summarization API failed: ${err}`)
+        console.error('[TruthScan] Summarize error:', err)
+      } finally {
+        _setSummarizeInProgress(false)
+      }
+    } else {
+      log('Summarization skipped — no local model available')
+    }
   }
 
   // ── Q&A Submission ────────────────────────────────────────────────────────
-  // NOTE: truthScanClient.queryContent() is preserved in api.ts.
-  // No local Q&A model is available — show a placeholder response.
 
   const submitQuestion = async () => {
     if (!userQuestion.trim() || !pageReport?.apiData?.scrapedData?.text) return
     setAnswerInProgress(true)
     try {
-      // No local Q&A model — return a graceful message.
-      await new Promise((r) => setTimeout(r, 400))
+      if (inferenceMode === 'api') {
+        // API mode: call the Groq/Gemini Q&A endpoint
+        const result = await _truthScanClient.queryContent(
+          userQuestion.trim(),
+          pageReport.apiData.scrapedData.text
+        )
+        setQaResponse(result)
+        log(`Q&A answered: ${result.answer_length} chars via ${result.model}`)
+      } else {
+        // Local mode: no Q&A model available
+        await new Promise((r) => setTimeout(r, 300))
+        setQaResponse({
+          question: userQuestion.trim(),
+          answer: 'Q&A requires an LLM — switch to API mode and ensure the Kit server is running.',
+          model: 'none',
+          content_length: pageReport.apiData.scrapedData.text.length,
+          answer_length: 0,
+        })
+      }
+    } catch (err) {
+      log(`Q&A failed: ${err}`)
       setQaResponse({
         question: userQuestion.trim(),
-        answer: 'Q&A requires a local language model, which is not bundled in this version. The AI detection result above was computed fully offline.',
-        model: 'none',
+        answer: `Request failed: ${err instanceof Error ? err.message : String(err)}`,
+        model: 'error',
         content_length: pageReport.apiData.scrapedData.text.length,
         answer_length: 0,
       })
-    } catch (err) {
-      log(`Q&A failed: ${err}`)
     } finally {
       setAnswerInProgress(false)
     }
@@ -941,7 +1177,7 @@ const App: React.FC = () => {
         ? 'bg-[#0a0a1a] text-slate-100'
         : 'bg-slate-100 text-slate-900 [&_.glass-panel]:bg-white [&_.glass-panel]:border-slate-200 [&_.ts-input]:bg-white [&_.ts-input]:border-slate-300 [&_.ts-input]:text-slate-900'
     )}>
-      <AppHeader darkMode={darkMode} serverOnline={serverOnline} onToggleTheme={toggleTheme} />
+      <AppHeader darkMode={darkMode} serverOnline={serverOnline} fakeModelOnline={fakeModelOnline} inferenceMode={inferenceMode} onToggleTheme={toggleTheme} onToggleMode={toggleMode} />
       <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className="flex-1 overflow-y-auto p-3">
@@ -954,6 +1190,8 @@ const App: React.FC = () => {
             summaryData={summaryData}
             pipelineStages={pipelineStages}
             serverOnline={serverOnline}
+            fakeModelOnline={fakeModelOnline}
+            inferenceMode={inferenceMode}
             onScan={triggerPageScan}
             onSummarize={triggerSummarize}
           />

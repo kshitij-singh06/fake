@@ -24,5 +24,16 @@
       "js": ["content.js"],
       "run_at": "document_end"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "*.wasm",
+        "*.mjs",
+        "models/*",
+        "models/ai_detector/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

@@ -5,10 +5,10 @@ console.log('[TruthScan Background] Service worker initialized')
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[TruthScan Background] Extension installed')
   chrome.storage.local.set({
-    theme: 'light',
+    theme: 'dark',
     autoScan: false,
     notifications: true,
-    apiUrl: 'http://localhost:5000',
+    apiUrl: 'http://localhost:3000',
   })
 })
 
@@ -79,8 +79,8 @@ chrome.action.onClicked.addListener((tab) => {
 
 async function probeApiServer(): Promise<{ success: boolean; message: string }> {
   try {
-    console.log('[TruthScan Background] Probing API server at localhost:5000...')
-    const response = await fetch('http://localhost:5000/api/scrape', {
+    console.log('[TruthScan Background] Probing API server at localhost:3000...')
+    const response = await fetch('http://localhost:3000/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: 'https://example.com' }),

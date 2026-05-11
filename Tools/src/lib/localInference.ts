@@ -1,201 +1,381 @@
 // TruthScan — Local ONNX inference engine
-// Uses @xenova/transformers for tokenization (bert-base-uncased vocab)
-// Uses onnxruntime-web for model inference (local model_quantized.onnx)
+// Uses onnxruntime-web for model inference.
+// Tokenisation uses a real WordPiece tokenizer loaded from the bundled tokenizer.json files.
 // External API code in api.ts is intentionally preserved for reference/fallback.
 
 import * as ort from 'onnxruntime-web'
 
 // ─── ONNX Runtime WASM configuration ─────────────────────────────────────────
-// Point ORT to the wasm binaries bundled in the extension's public folder.
-// Must be set before any InferenceSession is created.
-ort.env.wasm.wasmPaths = chrome.runtime.getURL('') // trailing slash resolved by ORT
+const _base = chrome.runtime.getURL('')
+ort.env.wasm.wasmPaths = {
+  'ort-wasm-simd-threaded.wasm':          `${_base}ort-wasm-simd-threaded.wasm`,
+  'ort-wasm-simd-threaded.jsep.wasm':     `${_base}ort-wasm-simd-threaded.jsep.wasm`,
+  'ort-wasm-simd-threaded.asyncify.wasm': `${_base}ort-wasm-simd-threaded.asyncify.wasm`,
+  'ort-wasm-simd-threaded.jspi.wasm':     `${_base}ort-wasm-simd-threaded.jspi.wasm`,
+} as unknown as Record<string, string>
+;(ort.env as any).webgpu = { disabled: true }
+;(ort.env as any).webnn  = { disabled: true }
+
+// ─── URLs ─────────────────────────────────────────────────────────────────────
+
+const AI_MODEL_URL        = chrome.runtime.getURL('models/ai_detector/model_quantized.onnx')
+const FAKE_MODEL_URL      = chrome.runtime.getURL('models/fake_detector/fakenews_detector_quantized.onnx')
+const AI_TOKENIZER_URL    = chrome.runtime.getURL('models/ai_detector/tokenizer.json')
+const FAKE_TOKENIZER_URL  = chrome.runtime.getURL('models/fake_detector/tokenizer.json')
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MODEL_URL = chrome.runtime.getURL('models/ai_detector/model_quantized.onnx')
-
-/** Maximum sequence length for DistilBERT (hard limit = 512) */
-const MAX_SEQ_LEN = 512
-
-/** How many characters we feed at most before tokenisation (1 char ≈ 0.3–0.5 tokens) */
+/** Maximum sequence length for DistilBERT */
+const MAX_SEQ_LEN   = 512
+/** Character limit fed to the tokenizer (≈ 0.3–0.5 tokens per char) */
 const MAX_TEXT_CHARS = 2000
 
-// ─── Label mapping from config.json ──────────────────────────────────────────
-// { "0": "HUMAN", "1": "AI" }
-const LABEL_AI = 1
+// Standard BERT special token IDs — both models are fine-tuned from distilbert-base-uncased
+const CLS_ID = 101  // [CLS]
+const SEP_ID = 102  // [SEP]
+const UNK_ID = 100  // [UNK]
 
-// ─── Singleton session ────────────────────────────────────────────────────────
+// Label indices (from each model's config.json)
+// AI detector:   { "0": "HUMAN", "1": "AI"   } → AI   = index 1
+// Fake detector: { "0": "FAKE",  "1": "REAL"  } → FAKE = index 0
+const LABEL_AI   = 1
+const LABEL_FAKE = 0
 
-let _session: ort.InferenceSession | null = null
-let _sessionPromise: Promise<ort.InferenceSession> | null = null
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-async function getSession(): Promise<ort.InferenceSession> {
-  if (_session) return _session
-  if (_sessionPromise) return _sessionPromise
+type Vocab = Map<string, number>
 
-  console.log('[TruthScan ONNX] Loading model from:', MODEL_URL)
-  _sessionPromise = ort.InferenceSession.create(MODEL_URL, {
+// ─── Singleton sessions ───────────────────────────────────────────────────────
+
+let _aiSession: ort.InferenceSession | null = null
+let _aiSessionPromise: Promise<ort.InferenceSession> | null = null
+let _fakeSession: ort.InferenceSession | null = null
+let _fakeSessionPromise: Promise<ort.InferenceSession> | null = null
+
+async function getAiSession(): Promise<ort.InferenceSession> {
+  if (_aiSession) return _aiSession
+  if (_aiSessionPromise) return _aiSessionPromise
+  console.log('[TruthScan ONNX] Loading AI model...')
+  _aiSessionPromise = ort.InferenceSession.create(AI_MODEL_URL, {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
-  }).then((s) => {
-    _session = s
-    console.log('[TruthScan ONNX] Model loaded. Inputs:', s.inputNames, 'Outputs:', s.outputNames)
-    return s
-  })
-
-  return _sessionPromise
+  }).then((s) => { _aiSession = s; return s })
+  return _aiSessionPromise
 }
 
-// ─── Tokenizer (via @xenova/transformers) ────────────────────────────────────
-// We use the standard bert-base-uncased tokenizer because our vocab.txt is not
-// bundled. Xenova caches the tokenizer files after the first fetch.
-
-type XenovaTokenizer = {
-  encode: (text: string, opts?: Record<string, unknown>) => Promise<{ input_ids: number[]; attention_mask: number[] }>
+async function getFakeSession(): Promise<ort.InferenceSession> {
+  if (_fakeSession) return _fakeSession
+  if (_fakeSessionPromise) return _fakeSessionPromise
+  console.log('[TruthScan ONNX] Loading fake-news model...')
+  _fakeSessionPromise = ort.InferenceSession.create(FAKE_MODEL_URL, {
+    executionProviders: ['wasm'],
+    graphOptimizationLevel: 'all',
+  }).then((s) => { _fakeSession = s; return s })
+  return _fakeSessionPromise
 }
 
-let _tokenizerPromise: Promise<XenovaTokenizer> | null = null
+// ─── Singleton vocabs ─────────────────────────────────────────────────────────
 
-async function getTokenizer(): Promise<XenovaTokenizer> {
-  if (_tokenizerPromise) return _tokenizerPromise
+let _aiVocab: Vocab | null = null
+let _aiVocabPromise: Promise<Vocab> | null = null
+let _fakeVocab: Vocab | null = null
+let _fakeVocabPromise: Promise<Vocab> | null = null
 
-  console.log('[TruthScan ONNX] Loading tokenizer (bert-base-uncased via @xenova/transformers)...')
+/**
+ * Loads the WordPiece vocab from a HuggingFace tokenizer.json bundled in the extension.
+ * Reads the model.vocab object which maps token strings to integer IDs.
+ */
+async function loadVocab(url: string): Promise<Vocab> {
+  console.log('[TruthScan Tokenizer] Loading vocab from:', url)
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`Failed to fetch tokenizer.json (${resp.status}): ${url}`)
+  const json = await resp.json() as { model?: { vocab?: Record<string, number> } }
+  const rawVocab = json?.model?.vocab
+  if (!rawVocab || typeof rawVocab !== 'object') {
+    throw new Error(`tokenizer.json at ${url} has no model.vocab — cannot tokenize`)
+  }
+  const vocab: Vocab = new Map(Object.entries(rawVocab))
+  console.log(`[TruthScan Tokenizer] Vocab loaded: ${vocab.size} tokens`)
+  return vocab
+}
 
-  _tokenizerPromise = (async () => {
-    // Dynamic import to avoid bundling issues in the content-script context.
-    const { AutoTokenizer, env } = await import('@xenova/transformers')
+async function getAiVocab(): Promise<Vocab> {
+  if (_aiVocab) return _aiVocab
+  if (_aiVocabPromise) return _aiVocabPromise
+  _aiVocabPromise = loadVocab(AI_TOKENIZER_URL).then((v) => { _aiVocab = v; return v })
+  return _aiVocabPromise
+}
 
-    // Allow remote fallback for the tokenizer vocab (fetched once, then cached).
-    env.allowRemoteModels = true
-    env.allowLocalModels = false
+async function getFakeVocab(): Promise<Vocab> {
+  if (_fakeVocab) return _fakeVocab
+  if (_fakeVocabPromise) return _fakeVocabPromise
+  _fakeVocabPromise = loadVocab(FAKE_TOKENIZER_URL).then((v) => { _fakeVocab = v; return v })
+  return _fakeVocabPromise
+}
 
-    const tok = await AutoTokenizer.from_pretrained('Xenova/bert-base-uncased')
-    console.log('[TruthScan ONNX] Tokenizer ready.')
+// ─── WordPiece tokenizer ──────────────────────────────────────────────────────
+//
+// Implements the standard HuggingFace BertTokenizer pipeline:
+//   1. BertNormalizer  — strip control chars, handle Chinese chars, optional lowercase
+//   2. BertPreTokenizer — split on whitespace AND punctuation boundaries
+//   3. WordPiece       — greedy longest-match subword splitting with ## prefix
+//   4. Wrap with [CLS] (101) … [SEP] (102), truncate to maxLen
 
-    return {
-      async encode(text: string) {
-        const out = await tok(text, {
-          truncation: true,
-          max_length: MAX_SEQ_LEN,
-          padding: false,
-          return_tensors: false,
-        })
-        return {
-          input_ids: Array.from(out.input_ids.data as BigInt64Array).map(Number),
-          attention_mask: Array.from(out.attention_mask.data as BigInt64Array).map(Number),
-        }
-      },
+function isChinese(cp: number): boolean {
+  return (
+    (cp >= 0x4E00 && cp <= 0x9FFF)   ||
+    (cp >= 0x3400 && cp <= 0x4DBF)   ||
+    (cp >= 0x20000 && cp <= 0x2A6DF) ||
+    (cp >= 0xF900 && cp <= 0xFAFF)
+  )
+}
+
+function isPunctuation(cp: number): boolean {
+  return (
+    (cp >= 33 && cp <= 47)   ||  // !"#$%&'()*+,-./
+    (cp >= 58 && cp <= 64)   ||  // :;<=>?@
+    (cp >= 91 && cp <= 96)   ||  // [\]^_`
+    (cp >= 123 && cp <= 126) ||  // {|}~
+    (cp >= 0x2000 && cp <= 0x206F)  // General Punctuation block
+  )
+}
+
+/** BertNormalizer: control char stripping, Chinese spacing, optional lowercase */
+function bertNormalize(text: string, lowercase: boolean): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const cp = text.charCodeAt(i)
+    if (cp === 0 || cp === 0xFFFD) continue
+    if ((cp >= 0x0000 && cp <= 0x001F) || (cp >= 0x007F && cp <= 0x009F)) {
+      out += ' '
+      continue
     }
-  })()
-
-  return _tokenizerPromise
+    if (isChinese(cp)) { out += ' ' + text[i] + ' '; continue }
+    out += text[i]
+  }
+  const cleaned = out.replace(/\s+/g, ' ').trim()
+  return lowercase ? cleaned.toLowerCase() : cleaned
 }
 
-// ─── Softmax ──────────────────────────────────────────────────────────────────
+/** BertPreTokenizer: split on whitespace and punctuation — punctuation chars become separate tokens */
+function bertPreTokenize(text: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  for (let i = 0; i < text.length; i++) {
+    const cp = text.charCodeAt(i)
+    if (cp === 0x20 || cp === 0x09 || cp === 0x0A || cp === 0x0D) {
+      if (current) { tokens.push(current); current = '' }
+    } else if (isPunctuation(cp)) {
+      if (current) { tokens.push(current); current = '' }
+      tokens.push(text[i])
+    } else {
+      current += text[i]
+    }
+  }
+  if (current) tokens.push(current)
+  return tokens
+}
+
+/** WordPiece greedy longest-match subword split. Returns [UNK_ID] if word can't be segmented. */
+function wordPieceSplit(word: string, vocab: Vocab): number[] {
+  if (word.length > 100) return [UNK_ID]
+  const subTokens: number[] = []
+  let start = 0
+  while (start < word.length) {
+    let end = word.length
+    let found = false
+    while (start < end) {
+      const sub = start === 0 ? word.slice(start, end) : '##' + word.slice(start, end)
+      if (vocab.has(sub)) {
+        subTokens.push(vocab.get(sub)!)
+        found = true
+        break
+      }
+      end--
+    }
+    if (!found) return [UNK_ID]  // whole word is unknown
+    start = end
+  }
+  return subTokens
+}
+
+/**
+ * Full BERT tokenize: normalize → pre-tokenize → WordPiece → add CLS/SEP.
+ * @param lowercase true for uncased models (fake detector), false for cased (AI detector)
+ */
+function bertTokenize(
+  text: string,
+  vocab: Vocab,
+  maxLen: number,
+  lowercase: boolean
+): { input_ids: number[]; attention_mask: number[] } {
+  const normalized = bertNormalize(text, lowercase)
+  const words = bertPreTokenize(normalized)
+  const ids: number[] = [CLS_ID]
+
+  for (const word of words) {
+    if (ids.length >= maxLen - 1) break
+    for (const id of wordPieceSplit(word, vocab)) {
+      if (ids.length >= maxLen - 1) break
+      ids.push(id)
+    }
+  }
+
+  ids.push(SEP_ID)
+  const mask = new Array(ids.length).fill(1)
+  return { input_ids: ids, attention_mask: mask }
+}
+
+// ─── Softmax with temperature scaling + output clamping ──────────────────────
+//
+// DistilBERT fine-tunes trained on small datasets produce extreme logits
+// (e.g. [-2.5, 2.8]) that collapse to near 0%/100% after standard softmax.
+//
+// Two mitigations:
+//   1. Temperature T=5: divides logits before softmax, flattening the curve.
+//      [-2.5, 2.8] / 5 = [-0.5, 0.56] → softmax → ~53% spread, not 99%.
+//   2. Clamp to [15, 85]: these models are known to be imperfectly calibrated.
+//      We never claim 0% or 100% certainty — that would be dishonest.
+
+const SOFTMAX_TEMPERATURE = 5.0
 
 function softmax(logits: Float32Array): Float32Array {
-  const max = Math.max(...Array.from(logits))
-  const exps = logits.map((v) => Math.exp(v - max))
-  const sum = exps.reduce((a, b) => a + b, 0)
+  const scaled = logits.map((v) => v / SOFTMAX_TEMPERATURE)
+  const max    = Math.max(...Array.from(scaled))
+  const exps   = scaled.map((v) => Math.exp(v - max))
+  const sum    = exps.reduce((a, b) => a + b, 0)
   return exps.map((v) => v / sum)
 }
 
-// ─── Public inference API ─────────────────────────────────────────────────────
+/** Clamp model output to [15, 85]% — prevents false certainty on an imperfect model */
+function clampScore(percent: number): number {
+  return Math.min(85, Math.max(15, percent))
+}
+
+// ─── Core classifier ──────────────────────────────────────────────────────────
+
+async function runLocalClassification(
+  session: ort.InferenceSession,
+  vocab: Vocab,
+  text: string,
+  labelIndex: number,
+  labelTag: string,
+  lowercase: boolean
+): Promise<{ percent: number; textPreview: string }> {
+  const truncated = text.slice(0, MAX_TEXT_CHARS).trim()
+  if (!truncated) return { percent: 0, textPreview: '' }
+
+  const { input_ids, attention_mask } = bertTokenize(truncated, vocab, MAX_SEQ_LEN, lowercase)
+  const seqLen = input_ids.length
+
+  console.log(`[TruthScan ONNX] ${labelTag} — seq len: ${seqLen}, first 8 IDs: [${input_ids.slice(0, 8).join(', ')}]`)
+
+  const inputIdsBig = new BigInt64Array(input_ids.map(BigInt))
+  const attMaskBig  = new BigInt64Array(attention_mask.map(BigInt))
+  const dims = [1, seqLen]
+
+  const feeds: Record<string, ort.Tensor> = {
+    input_ids:      new ort.Tensor('int64', inputIdsBig, dims),
+    attention_mask: new ort.Tensor('int64', attMaskBig,  dims),
+  }
+
+  if (session.inputNames.includes('token_type_ids')) {
+    feeds.token_type_ids = new ort.Tensor('int64', new BigInt64Array(seqLen).fill(0n), dims)
+  }
+
+  const results   = await session.run(feeds)
+  const logitKey  = session.outputNames.find((n) => n.toLowerCase().includes('logit')) ?? session.outputNames[0]
+  const logitsRaw = results[logitKey].data as Float32Array
+  const probs     = softmax(logitsRaw)
+  const percent = clampScore(Math.round(probs[labelIndex] * 100))
+
+  console.log(`[TruthScan ONNX] ${labelTag} — logits: [${Array.from(logitsRaw).join(', ')}] → ${percent}% (clamped to [15,85])`)
+
+  return { percent, textPreview: truncated.slice(0, 200) }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface LocalDetectionResult {
   /** Probability [0–100] that the text is AI-generated */
   aiLikelihoodPercent: number
-  /** Short preview of the text that was analyzed */
   textPreview: string
-  /** Whether the model was loaded successfully */
+  modelLoaded: boolean
+}
+
+export interface LocalFakeDetectionResult {
+  /** Probability [0–100] that the text is fake news */
+  fakeLikelihoodPercent: number
+  textPreview: string
   modelLoaded: boolean
 }
 
 /**
- * Runs AI-text detection entirely client-side.
- * External API (api.ts) is NOT called; it is preserved for reference only.
+ * Runs AI-text detection entirely client-side using the real WordPiece tokenizer.
+ * NOTE: Even though tokenizer_config.json says do_lower_case=false, the bundled
+ * vocab is the UNCASED BERT vocab (30,522 lowercase tokens). We must lowercase
+ * or proper nouns ('Wikipedia', 'Google') become [UNK] and corrupt the output.
  */
 export async function detectAILocally(rawText: string): Promise<LocalDetectionResult> {
-  const truncated = rawText.slice(0, MAX_TEXT_CHARS).trim()
-  const textPreview = truncated.slice(0, 200)
-
-  if (!truncated) {
-    return { aiLikelihoodPercent: 0, textPreview: '', modelLoaded: false }
-  }
-
   try {
-    // Load tokenizer and model in parallel (both are singletons, safe to race)
-    const [tokenizer, session] = await Promise.all([getTokenizer(), getSession()])
-
-    // Tokenise
-    const { input_ids, attention_mask } = await tokenizer.encode(truncated)
-    const seqLen = input_ids.length
-
-    console.log(`[TruthScan ONNX] Token sequence length: ${seqLen}`)
-
-    // Build tensors
-    const inputIdsBig = new BigInt64Array(seqLen)
-    const attMaskBig = new BigInt64Array(seqLen)
-    for (let i = 0; i < seqLen; i++) {
-      inputIdsBig[i] = BigInt(input_ids[i])
-      attMaskBig[i] = BigInt(attention_mask[i])
-    }
-
-    const dims = [1, seqLen]
-    const feeds: Record<string, ort.Tensor> = {
-      input_ids: new ort.Tensor('int64', inputIdsBig, dims),
-      attention_mask: new ort.Tensor('int64', attMaskBig, dims),
-    }
-
-    // DistilBERT does not use token_type_ids, but some exports include it.
-    // Add it if the model expects it.
-    if (session.inputNames.includes('token_type_ids')) {
-      const tokenTypeIds = new BigInt64Array(seqLen).fill(0n)
-      feeds.token_type_ids = new ort.Tensor('int64', tokenTypeIds, dims)
-    }
-
-    // Run inference
-    const results = await session.run(feeds)
-
-    // Extract logits — typically named "logits" or output_0
-    const logitKey = session.outputNames.find((n) => n.toLowerCase().includes('logit')) ?? session.outputNames[0]
-    const logitsRaw = results[logitKey].data as Float32Array
-    const probs = softmax(logitsRaw)
-
-    const aiProb = probs[LABEL_AI]
-    const aiLikelihoodPercent = Math.round(aiProb * 100)
-
-    console.log(`[TruthScan ONNX] AI prob: ${aiLikelihoodPercent}% (logits: [${Array.from(logitsRaw).join(', ')}])`)
-
-    return { aiLikelihoodPercent, textPreview, modelLoaded: true }
+    const [session, vocab] = await Promise.all([getAiSession(), getAiVocab()])
+    const { percent, textPreview } = await runLocalClassification(
+      session, vocab, rawText, LABEL_AI, 'AI', true  // uncased vocab — must lowercase
+    )
+    return { aiLikelihoodPercent: percent, textPreview, modelLoaded: true }
   } catch (err) {
-    console.error('[TruthScan ONNX] Inference error:', err)
-    throw new Error(`Local inference failed: ${err instanceof Error ? err.message : String(err)}`)
+    console.error('[TruthScan ONNX] AI inference error:', err)
+    throw new Error(`Local AI inference failed: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
 /**
- * Preloads the model and tokenizer in the background so the first user scan
- * is fast. Call this once on extension startup.
+ * Runs fake-news detection entirely client-side using the real WordPiece tokenizer.
+ * Fake detector IS lowercased (do_lower_case: true in tokenizer_config.json).
  */
+export async function detectFakeNewsLocally(rawText: string): Promise<LocalFakeDetectionResult> {
+  try {
+    const [session, vocab] = await Promise.all([getFakeSession(), getFakeVocab()])
+    const { percent, textPreview } = await runLocalClassification(
+      session, vocab, rawText, LABEL_FAKE, 'FAKE', true  // uncased model
+    )
+    return { fakeLikelihoodPercent: percent, textPreview, modelLoaded: true }
+  } catch (err) {
+    console.error('[TruthScan ONNX] Fake-news inference error:', err)
+    throw new Error(`Local fake-news inference failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/** Preloads the AI model and vocab so the first scan is instant. */
 export async function warmUpModel(): Promise<void> {
   try {
-    await Promise.all([getTokenizer(), getSession()])
-    console.log('[TruthScan ONNX] Warm-up complete.')
+    await Promise.all([getAiSession(), getAiVocab()])
+    console.log('[TruthScan ONNX] AI warm-up complete.')
   } catch (err) {
-    console.warn('[TruthScan ONNX] Warm-up failed (non-fatal):', err)
+    console.warn('[TruthScan ONNX] AI warm-up failed (non-fatal):', err)
   }
 }
 
-/**
- * Checks whether the ONNX model file is reachable (extension bundle check).
- * Does NOT call any external API.
- */
+/** Preloads the fake-news model and vocab so the first scan is instant. */
+export async function warmUpFakeModel(): Promise<void> {
+  try {
+    await Promise.all([getFakeSession(), getFakeVocab()])
+    console.log('[TruthScan ONNX] Fake-news warm-up complete.')
+  } catch (err) {
+    console.warn('[TruthScan ONNX] Fake-news warm-up failed (non-fatal):', err)
+  }
+}
+
+/** Checks whether the AI ONNX model file is reachable in the extension bundle. */
 export async function isModelReady(): Promise<boolean> {
   try {
-    const resp = await fetch(MODEL_URL, { method: 'HEAD' })
-    return resp.ok
-  } catch {
-    return false
-  }
+    return (await fetch(AI_MODEL_URL, { method: 'HEAD' })).ok
+  } catch { return false }
+}
+
+/** Checks whether the fake-news ONNX model file is reachable in the extension bundle. */
+export async function isFakeModelReady(): Promise<boolean> {
+  try {
+    return (await fetch(FAKE_MODEL_URL, { method: 'HEAD' })).ok
+  } catch { return false }
 }

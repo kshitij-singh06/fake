@@ -68,7 +68,7 @@ export interface AnalysisResult {
 }
 
 class TruthScanClient {
-  private readonly serverBase = 'http://localhost:5000'
+  private readonly serverBase = 'http://localhost:3000'
 
   private trace(message: string, data?: unknown) {
     console.log(`[TruthScan API] ${message}`, data ?? '')
