@@ -13,6 +13,7 @@ const imageDetectRoute = require('./routes/imageDetectRoute');
 const summarizeRoute = require('./routes/summarizeRoute');
 const qaRoute = require('./routes/qaRoute');
 const sentimentRoute = require('./routes/sentimentRoute');
+const fusionRoute    = require('./routes/fusionRoute');
 
 const HOST = '0.0.0.0';
 const PORT = process.env.PORT || 3000;
@@ -31,6 +32,7 @@ app.use('/api/image-detect-ai', imageDetectRoute);
 app.use('/api/summarize', summarizeRoute);
 app.use('/api/qa', qaRoute);
 app.use('/api/sentiment', sentimentRoute);
+app.use('/api/fusion',    fusionRoute);
 
 // Health check
 app.get('/health', (_req, res) => {

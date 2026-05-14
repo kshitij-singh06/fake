@@ -26,6 +26,78 @@ export interface FactCheckResult {
   claims: FactCheckClaim[]
 }
 
+// ─── Fusion types ──────────────────────────────────────────────────────────
+
+export interface FusionSignals {
+  onnxScore: number | null
+  llmClaimScore: number | null
+  sourceDomainScore: number | null
+}
+
+export interface FusionWeights {
+  onnx: number
+  llm: number
+  source: number
+}
+
+export interface FusionCore {
+  fusedScore: number
+  verdict: 'real' | 'fake' | 'uncertain'
+  confidence: 'high' | 'medium' | 'low'
+  signals: FusionSignals
+  weights: FusionWeights
+  reasoning: string
+}
+
+export interface GoogleReview {
+  claimText: string
+  claimant: string
+  rating: string
+  ratingValue: number
+  publisher: string
+  reviewUrl: string
+}
+
+export interface FusionClaim {
+  claim: string
+  verdict: 'true' | 'false' | 'uncertain'
+  confidence: number
+  reasoning: string
+  evidence: SupportingSource[]
+  googleReviews: GoogleReview[]
+  // legacy compat
+  isLikelyTrue: boolean
+  supportingSources: SupportingSource[]
+}
+
+export interface DomainBreakdownEntry {
+  url: string
+  domain: string
+  score: number
+  tier: 'trusted' | 'reliable' | 'neutral' | 'low' | 'flagged'
+}
+
+export interface DomainCredibility {
+  averageScore: number
+  fakeScore: number
+  breakdown: DomainBreakdownEntry[]
+}
+
+export interface PageClassification {
+  type: 'news-unknown' | 'news-trusted' | 'news-flagged' | 'reference' | 'official' | 'social' | 'commercial' | 'blog-unknown' | 'other'
+  shouldFactCheck: boolean
+  reason: string
+}
+
+export interface FusionResult {
+  fusion: FusionCore
+  claims: FusionClaim[]
+  domainCredibility: DomainCredibility
+  legacyClaims: FactCheckClaim[]
+  pageClassification?: PageClassification
+  skippedReason?: string
+}
+
 export interface SentimentResult {
   summary: string
 }
@@ -242,6 +314,33 @@ class TruthScanClient {
     } catch (err) {
       this.trace('Server check failed:', err)
       return false
+    }
+  }
+
+  /**
+   * Calls the fusion endpoint (/api/fusion) and returns a rich FusionResult.
+   *
+   * @param text          - full article text
+   * @param sourceUrl     - the URL of the page being analysed (for domain credibility)
+   * @param onnxFakeScore - [0–100] fake-news score from the local ONNX model (optional)
+   */
+  async runFusionAnalysis(
+    text: string,
+    sourceUrl: string,
+    onnxFakeScore: number | null = null,
+  ): Promise<FusionResult> {
+    this.trace(`Running fusion analysis — onnxScore: ${onnxFakeScore ?? 'N/A'}`)
+    try {
+      const data = await this.buildPostRequest<FusionResult>('/api/fusion', {
+        text,
+        sourceUrl,
+        onnxFakeScore,
+      })
+      this.trace('Fusion result:', data.fusion)
+      return data
+    } catch (err) {
+      this.trace('Fusion error:', err)
+      throw new Error(`Fusion analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
     }
   }
 }

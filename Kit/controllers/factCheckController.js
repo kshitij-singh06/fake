@@ -1,6 +1,7 @@
 // TruthScan — Claim verification (fact-check) controller
 const axios = require('axios');
 const { tryModelsInOrder } = require('../lib/modelHelpers');
+const { queryGoogleFactCheck } = require('../lib/googleFactCheck');
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const MAX_EVIDENCE_RESULTS = 5;
@@ -26,7 +27,7 @@ Extract clear factual claims from this text. Return them as a plain numbered lis
   return claims;
 }
 
-// Step 2: Fetch web evidence for a single claim via Tavily Search API
+// Step 2: Fetch web evidence for a single claim via Tavily Search API (Fallback)
 async function fetchWebEvidence(claim) {
   try {
     console.log(`[TruthScan FactCheck] Searching Tavily for: "${claim}"`);
@@ -64,7 +65,6 @@ async function fetchWebEvidence(claim) {
       console.warn('[TruthScan FactCheck] Tavily rate limit exceeded — falling back to AI-only verification');
       return [];
     }
-    // Any other error: propagate so the outer handler can log it
     throw new Error(`Tavily search failed: ${err.message}`);
   }
 }
@@ -76,8 +76,8 @@ async function verifyClaim(claim, evidence) {
   const prompt = hasEvidence
     ? `
 You are an AI fact-checking assistant.
-A claim has been made, and here are web snippets found via search.
-Decide whether the sources support the claim.
+A claim has been made, and here are web snippets found via authoritative fact-checks and web searches.
+Decide whether the sources support the claim as true or debunk it as false.
 Respond with ONLY "true" or "false".
 
 Claim: "${claim}"
@@ -118,14 +118,38 @@ exports.handleFactCheck = async (req, res) => {
     const verifiedClaims = [];
 
     for (const claim of claims) {
-      const evidence = await fetchWebEvidence(claim);
-      const topEvidence = evidence.slice(0, MAX_EVIDENCE_RESULTS);
-      const isLikelyTrue = await verifyClaim(claim, topEvidence);
+      const combinedEvidence = [];
+
+      // 1. Prioritise Google Fact Check Tools API for verified agency reviews
+      const googleReviews = await queryGoogleFactCheck(claim);
+      if (googleReviews && googleReviews.length > 0) {
+        for (const r of googleReviews) {
+          if (combinedEvidence.length >= MAX_EVIDENCE_RESULTS) break;
+          combinedEvidence.push({
+            title: `[Fact-Check] ${r.publisher}: ${r.rating}`,
+            link: r.reviewUrl || '',
+            snippet: `Authoritative Fact-Check by ${r.publisher}. Evaluated claim: "${r.claimText}". Official rating/verdict: ${r.rating}.`,
+            isGoogleFactCheck: true,
+            ratingValue: r.ratingValue,
+          });
+        }
+      }
+
+      // 2. Supplement remaining slots via Tavily general web search if needed
+      if (combinedEvidence.length < MAX_EVIDENCE_RESULTS) {
+        const tavilyEvidence = await fetchWebEvidence(claim);
+        for (const item of tavilyEvidence) {
+          if (combinedEvidence.length >= MAX_EVIDENCE_RESULTS) break;
+          combinedEvidence.push(item);
+        }
+      }
+
+      const isLikelyTrue = await verifyClaim(claim, combinedEvidence);
 
       verifiedClaims.push({
         claim,
         isLikelyTrue,
-        supportingSources: topEvidence.map(({ title, link }) => ({ title, link })),
+        supportingSources: combinedEvidence.map(({ title, link }) => ({ title, link })),
       });
     }
 

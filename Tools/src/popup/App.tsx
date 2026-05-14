@@ -1,5 +1,5 @@
 // TruthScan — Main popup application
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Shield, AlertTriangle, CheckCircle, Info, Moon, Sun,
   Settings, Zap, Eye, BarChart3, HelpCircle, Loader2,
@@ -14,6 +14,7 @@ import {
   FactCheckClaim,
   SummarizationResult,
   QAResult,
+  FusionResult,
 } from '@/lib/api'
 import {
   detectAILocally,
@@ -22,6 +23,8 @@ import {
   isModelReady,
   warmUpFakeModel,
   warmUpModel,
+  scoreSentences,
+  SentenceScore,
 } from '@/lib/localInference'
 import ScanPipeline, { PipelineStage } from '@/components/AnalysisProgress'
 import DiagnosticsPanel from '@/components/DebugPanel'
@@ -45,6 +48,9 @@ interface PageReport {
   results: ScanEntry[]
   factCheckClaims?: FactCheckClaim[]
   apiData?: AnalysisResult
+  fusionResult?: FusionResult
+  /** Raw page text stored for sentence-level ONNX scoring */
+  pageText?: string
 }
 
 type ActiveTab = 'overview' | 'analysis' | 'qa' | 'settings'
@@ -388,20 +394,319 @@ function OverviewTab({
 
 // ─── AnalysisTab ──────────────────────────────────────────────────────────────
 
+// ─── FusionBreakdown ──────────────────────────────────────────────────────────
+
+interface FusionBreakdownProps {
+  result: FusionResult
+}
+
+function FusionBreakdown({ result }: FusionBreakdownProps) {
+  const { fusion, domainCredibility, pageClassification, skippedReason } = result
+  const [showOnnxCheck, setShowOnnxCheck] = React.useState(false)
+
+  const verdictColor =
+    fusion.verdict === 'fake'   ? 'text-red-400 border-red-500/40 bg-red-500/10'
+    : fusion.verdict === 'real' ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
+    :                             'text-amber-400 border-amber-500/40 bg-amber-500/10'
+  const confColor =
+    fusion.confidence === 'high'    ? 'text-emerald-400'
+    : fusion.confidence === 'medium' ? 'text-amber-400'
+    :                                   'text-slate-400'
+
+  const signals = [
+    { label: 'ONNX Model',         value: fusion.signals.onnxScore,         weight: fusion.weights.onnx   },
+    { label: 'LLM Claim Check',    value: fusion.signals.llmClaimScore,     weight: fusion.weights.llm    },
+    { label: 'Source Credibility', value: fusion.signals.sourceDomainScore, weight: fusion.weights.source },
+  ]
+
+  const pageTypeLabel: Record<string, string> = {
+    'news-trusted':  '✓ Trusted Outlet',
+    'news-flagged':  '⚠ Flagged Source',
+    'news-unknown':  'Unknown Source',
+    'reference':     '📖 Reference Page',
+    'official':      '🏛 Official Source',
+    'social':        '💬 Social Media',
+    'commercial':    '🛒 Commercial Page',
+    'blog-unknown':  'Blog / Unknown',
+    'other':         'Other',
+  }
+
+  // ONNX-only result panel data
+  const onnxScore = fusion.signals.onnxScore
+  const onnxLabel =
+    onnxScore === null      ? 'N/A'
+    : onnxScore >= 70       ? 'High Risk'
+    : onnxScore >= 45       ? 'Moderate'
+    : onnxScore >= 25       ? 'Low Risk'
+    :                         'Very Low'
+  const onnxBarColor =
+    onnxScore !== null && onnxScore >= 70 ? 'bg-red-500'
+    : onnxScore !== null && onnxScore >= 45 ? 'bg-amber-500'
+    : 'bg-emerald-500'
+  const onnxTextColor =
+    onnxScore !== null && onnxScore >= 70 ? 'text-red-400'
+    : onnxScore !== null && onnxScore >= 45 ? 'text-amber-400'
+    : 'text-emerald-400'
+
+  return (
+    <div className="glass-panel p-4 space-y-3">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          <Zap className="w-4 h-4 text-purple-400" />
+          Fusion Verdict
+        </h3>
+        <div className="flex items-center gap-1.5">
+          {pageClassification && (
+            <span className={cn(
+              'text-[9px] font-semibold px-1.5 py-0.5 rounded-md border',
+              pageClassification.type === 'news-trusted' || pageClassification.type === 'official'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              : pageClassification.type === 'news-flagged'
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+              : pageClassification.type === 'reference'
+                ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+              : 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+            )}>
+              {pageTypeLabel[pageClassification.type] ?? pageClassification.type}
+            </span>
+          )}
+          <span className={cn('text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border', confColor,
+            fusion.confidence === 'high'    ? 'border-emerald-500/40 bg-emerald-500/10'
+            : fusion.confidence === 'medium' ? 'border-amber-500/40 bg-amber-500/10'
+            : 'border-slate-500/40 bg-slate-500/10'
+          )}>
+            {fusion.confidence} confidence
+          </span>
+        </div>
+      </div>
+
+      {/* ── Skipped reason notice ──────────────────────────────────────── */}
+      {skippedReason && (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 px-3 py-2 bg-sky-500/10 border border-sky-500/20 rounded-lg">
+            <Info className="w-3.5 h-3.5 text-sky-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-[10px] text-sky-300 leading-relaxed">{skippedReason}</p>
+              <p className="text-[9px] text-slate-600 mt-1">
+                The local ONNX model still ran — see Signal Breakdown below.
+                Only the LLM fact-check was skipped.
+              </p>
+            </div>
+          </div>
+
+          {/* Show ONNX score button — score already computed, just reveal it */}
+          {onnxScore !== null && !showOnnxCheck && (
+            <button
+              onClick={() => setShowOnnxCheck(true)}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 transition-colors text-xs font-semibold text-purple-300"
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              Show ONNX Text Score
+            </button>
+          )}
+
+          {/* ONNX-only result panel */}
+          {showOnnxCheck && onnxScore !== null && (
+            <div className="p-3 rounded-xl border border-purple-500/30 bg-purple-500/5 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-purple-400" />
+                  <span className="text-[11px] font-semibold text-purple-300">ONNX Model Check</span>
+                </div>
+                <button
+                  onClick={() => setShowOnnxCheck(false)}
+                  className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors"
+                >
+                  hide
+                </button>
+              </div>
+              <p className="text-[9px] text-slate-600">
+                Local ONNX ran on the raw text (LLM fact-check was skipped for this page type).
+              </p>
+              {/* Score bar */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={cn('text-xs font-bold', onnxTextColor)}>{onnxLabel}</span>
+                  <span className={cn('text-lg font-black', onnxTextColor)}>{onnxScore}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                  <div
+                    className={cn('h-full rounded-full transition-all duration-700', onnxBarColor)}
+                    style={{ width: `${onnxScore}%` }}
+                  />
+                </div>
+                <p className="text-[9px] text-slate-700 mt-1">
+                  Fake-news likelihood based on text patterns alone — no source verification.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Verdict badge + fused score ─────────────────────────────────── */}
+      <div className={cn('flex items-center justify-between px-4 py-3 rounded-xl border', verdictColor)}>
+        <span className="text-sm font-bold capitalize">{fusion.verdict}</span>
+        <span className="text-2xl font-black">{fusion.fusedScore}%</span>
+      </div>
+
+      {/* ── Signal bars ─────────────────────────────────────────────────── */}
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">Signal Breakdown</p>
+        {signals.map(({ label, value, weight }) => (
+          <div key={label}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] text-slate-400">{label}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-600">{Math.round(weight * 100)}% wt</span>
+                <span className={cn('text-xs font-bold',
+                  value === null       ? 'text-slate-600'
+                  : value >= 60       ? 'text-red-400'
+                  : value >= 40       ? 'text-amber-400'
+                  : 'text-emerald-400'
+                )}>
+                  {value !== null ? `${value}%` : 'skipped'}
+                </span>
+              </div>
+            </div>
+            <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+              {value !== null && (
+                <div
+                  className={cn('h-full rounded-full transition-all duration-700',
+                    value >= 60 ? 'bg-red-500' : value >= 40 ? 'bg-amber-500' : 'bg-emerald-500'
+                  )}
+                  style={{ width: `${value}%` }}
+                />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Reasoning ────────────────────────────────────────────────────── */}
+      {fusion.reasoning && (
+        <p className="text-[10px] text-slate-600 leading-relaxed italic">{fusion.reasoning}</p>
+      )}
+
+      {/* ── Domain tier badges ───────────────────────────────────────────── */}
+      {domainCredibility.breakdown.length > 0 && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Source Domains</p>
+          <div className="flex flex-wrap gap-1">
+            {domainCredibility.breakdown.slice(0, 5).map((b) => (
+              <span key={b.domain} className={cn(
+                'text-[10px] px-1.5 py-0.5 rounded-md border',
+                b.tier === 'trusted'    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : b.tier === 'reliable' ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+                : b.tier === 'flagged'  ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : b.tier === 'low'      ? 'bg-orange-500/10 border-orange-500/30 text-orange-400'
+                : 'bg-white/5 border-white/10 text-slate-500'
+              )}>
+                {b.domain}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ─── HighlightToolbar ─────────────────────────────────────────────────────────
+
+type HighlightMode = 'fake' | 'ai' | 'both' | null
+
+interface HighlightToolbarProps {
+  mode: HighlightMode
+  scoring: boolean
+  statusMsg: string
+  onHighlight: (mode: 'fake' | 'ai' | 'both') => void
+  onClear: () => void
+}
+
+function HighlightToolbar({ mode, scoring, statusMsg, onHighlight, onClear }: HighlightToolbarProps) {
+  const btn = (label: string, m: 'fake' | 'ai' | 'both', color: string, activeColor: string) => (
+    <button
+      disabled={scoring}
+      onClick={() => onHighlight(m)}
+      className={cn(
+        'flex-1 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors',
+        mode === m ? activeColor : `${color} opacity-70 hover:opacity-100`,
+        scoring && 'cursor-wait opacity-50',
+      )}
+    >
+      {scoring && mode === m ? <><Loader2 className="inline w-3 h-3 animate-spin mr-1" />Scoring…</> : label}
+    </button>
+  )
+
+  return (
+    <div className="glass-panel p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+          <Eye className="w-3 h-3" />
+          Highlight on Page
+        </p>
+        {mode && (
+          <button
+            onClick={onClear}
+            className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors"
+          >
+            clear
+          </button>
+        )}
+      </div>
+      <div className="flex gap-1.5">
+        {btn('🔴 Fake', 'fake', 'border-red-500/30 bg-red-500/10 text-red-400',     'border-red-500/60 bg-red-500/25 text-red-300')}
+        {btn('🟣 AI',   'ai',   'border-purple-500/30 bg-purple-500/10 text-purple-400', 'border-purple-500/60 bg-purple-500/25 text-purple-300')}
+        {btn('🟠 Both', 'both', 'border-amber-500/30 bg-amber-500/10 text-amber-400',  'border-amber-500/60 bg-amber-500/25 text-amber-300')}
+      </div>
+      {statusMsg ? (
+        <p className="text-[10px] text-amber-400 leading-relaxed flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          {statusMsg}
+        </p>
+      ) : (
+        <p className="text-[9px] text-slate-700 leading-relaxed">
+          Runs sentence-level ONNX scoring (~5–10 s). A panel will appear on the page.
+          Results are approximate — short chunks lack full context.
+        </p>
+      )}
+    </div>
+  )
+}
+
 interface AnalysisTabProps {
   report: PageReport
   summaryData: SummarizationResult | null
   summarizeInProgress: boolean
   imageExpanded: boolean
+  highlightMode: HighlightMode
+  highlightScoring: boolean
+  highlightStatus: string
   onSummarize: () => void
   onToggleImages: () => void
+  onHighlight: (mode: 'fake' | 'ai' | 'both') => void
+  onClearHighlights: () => void
 }
 
-function AnalysisTab({ report, summaryData, summarizeInProgress, imageExpanded, onSummarize, onToggleImages }: AnalysisTabProps) {
+function AnalysisTab({ report, summaryData, summarizeInProgress, imageExpanded, highlightMode, highlightScoring, highlightStatus, onSummarize, onToggleImages, onHighlight, onClearHighlights }: AnalysisTabProps) {
   const activeSummary = summaryData ?? report.apiData?.summarizationResult
 
   return (
     <div className="space-y-3">
+      {/* Fusion breakdown — shown when available */}
+      {report.fusionResult && <FusionBreakdown result={report.fusionResult} />}
+
+      {/* Highlight toolbar — always shown after scan */}
+      <HighlightToolbar
+        mode={highlightMode}
+        scoring={highlightScoring}
+        statusMsg={highlightStatus}
+        onHighlight={onHighlight}
+        onClear={onClearHighlights}
+      />
       {/* Detection Results */}
       <div className="glass-panel p-4">
         <div className="flex items-center justify-between mb-3">
@@ -760,12 +1065,15 @@ const App: React.FC = () => {
   // setSummaryData / _setSummarizeInProgress are kept for future local model additions.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [summaryData, _setSummaryData] = useState<SummarizationResult | null>(null)
+  const [_fusionResult, setFusionResult] = useState<FusionResult | null>(null)
   const [qaResponse, setQaResponse] = useState<QAResult | null>(null)
   const [userQuestion, setUserQuestion] = useState('')
   const [serverOnline, setServerOnline] = useState<boolean | null>(null)
   const [fakeModelOnline, setFakeModelOnline] = useState<boolean | null>(null)
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([])
   const [imageExpanded, setImageExpanded] = useState(false)
+  const [highlightMode, setHighlightMode] = useState<HighlightMode>(null)
+  const [highlightScoring, setHighlightScoring] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get(['theme', 'inferenceMode'], (result) => {
@@ -821,6 +1129,113 @@ const App: React.FC = () => {
     log(`Switched to ${next} mode`)
   }
 
+  // ── Page Highlight Functions ──────────────────────────────────────────────
+
+  const [highlightStatus, setHighlightStatus] = useState('')
+  // Ref-based lock prevents concurrent ONNX session.run() calls
+  // (React state updates are async so disabled={scoring} has a race window)
+  const highlightLockRef = useRef(false)
+
+  const triggerHighlight = async (mode: 'fake' | 'ai' | 'both') => {
+    if (highlightLockRef.current) {
+      setHighlightStatus('Already scoring — please wait.')
+      return
+    }
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    const tabId = tabs[0]?.id
+    if (!tabId) {
+      setHighlightStatus('Could not find active tab.')
+      return
+    }
+
+    setHighlightMode(mode)
+    setHighlightScoring(true)
+    setHighlightStatus('')
+    highlightLockRef.current = true
+
+    try {
+      // ── Re-fetch page text if missing from cached report ──────────────────
+      let text = pageReport?.pageText ?? ''
+
+      if (!text) {
+        log('pageText missing from cached report — re-fetching from content script')
+        setHighlightStatus('Fetching page text\u2026')
+        try {
+          const response = await chrome.tabs.sendMessage(tabId, { type: 'ANALYZE_PAGE' })
+          text = response?.content?.text ?? ''
+          if (text) {
+            // Patch the in-memory report so it works next time too
+            setPageReport((prev) => prev ? { ...prev, pageText: text } : prev)
+          }
+        } catch (fetchErr) {
+          log(`Content script fetch failed: ${fetchErr}`)
+        }
+      }
+
+      if (!text) {
+        setHighlightStatus('No page text available. Try running a fresh scan first.')
+        return
+      }
+
+      // ── Run sentence-level ONNX scoring ───────────────────────────────────
+      setHighlightStatus(`Scoring sentences… (~5–10 s)`)
+      const scores: SentenceScore[] = await scoreSentences(text, mode)
+      log(`Scored ${scores.length} sentence chunks, sending to content script`)
+
+      if (scores.length === 0) {
+        setHighlightStatus('No scoreable sentences found in page text.')
+        return
+      }
+
+      // ── Send to content script (with injection fallback) ──────────────────
+      // The content script may not be active if the page loaded before the
+      // extension was enabled on this tab. Try sending first; if the channel
+      // is not open, inject the script then retry.
+      setHighlightStatus('')
+      const highlightMsg = { type: 'HIGHLIGHT_SENTENCES', scores, mode }
+      try {
+        await chrome.tabs.sendMessage(tabId, highlightMsg)
+      } catch (sendErr: unknown) {
+        const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr)
+        if (errMsg.includes('Could not establish connection') || errMsg.includes('Receiving end does not exist')) {
+          log('Content script not reachable for highlight — injecting and retrying…')
+          setHighlightStatus('Injecting content script…')
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId },
+              files: ['content.js'],
+            })
+            // Brief pause so the script can register its message listener
+            await new Promise((r) => setTimeout(r, 300))
+            await chrome.tabs.sendMessage(tabId, highlightMsg)
+            setHighlightStatus('')
+          } catch (injectErr) {
+            throw new Error(`Could not inject content script: ${injectErr}`)
+          }
+        } else {
+          throw sendErr
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      log(`Highlight failed: ${msg}`)
+      setHighlightStatus(`Error: ${msg.slice(0, 80)}`)
+    } finally {
+      setHighlightScoring(false)
+      highlightLockRef.current = false
+    }
+  }
+
+  const clearPageHighlights = async () => {
+    setHighlightMode(null)
+    setHighlightStatus('')
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    const tabId = tabs[0]?.id
+    if (tabId) {
+      chrome.tabs.sendMessage(tabId, { type: 'CLEAR_HIGHLIGHTS' }).catch(() => {})
+    }
+  }
+
   // ── Pipeline Stage Management ─────────────────────────────────────────────
 
   const advanceStage = (stageId: string, status: PipelineStage['status'], error?: string) => {
@@ -832,14 +1247,14 @@ const App: React.FC = () => {
   const buildPipelineStages = (): PipelineStage[] => {
     const isApi = inferenceMode === 'api'
     return [
-      { id: 'get-url',        title: 'Getting Page URL',    description: 'Retrieving current tab URL',                                        status: 'pending' },
-      { id: 'scrape-content', title: 'Extracting Content',  description: 'Reading page text via content script',                               status: 'pending' },
-      { id: 'detect-ai',      title: 'AI Detection',        description: isApi ? 'Gemini LLM scoring via server'    : 'Local DistilBERT ONNX', status: 'pending' },
-      { id: 'fact-check',     title: 'Fact-Check',          description: isApi ? 'Tavily search + LLM verification' : 'Local DistilBERT ONNX', status: 'pending' },
-      { id: 'sentiment',      title: 'Sentiment Analysis',  description: isApi ? 'Gemini sentiment via server'      : 'Skipped — no local model', status: 'pending' },
-      { id: 'image-scan',     title: 'Image Scanning',      description: isApi ? 'AI image detection via server'    : 'Skipped — no local model', status: 'pending' },
-      { id: 'summarize',      title: 'Summarizing',         description: isApi ? 'Groq / Gemini summarization'      : 'Skipped — no local model', status: 'pending' },
-      { id: 'report',         title: 'Building Report',     description: 'Compiling risk assessment',                                          status: 'pending' },
+      { id: 'get-url',        title: 'Getting Page URL',    description: 'Retrieving current tab URL',                                                       status: 'pending' },
+      { id: 'scrape-content', title: 'Extracting Content',  description: 'Reading page text via content script',                                              status: 'pending' },
+      { id: 'detect-ai',      title: 'AI Detection',        description: isApi ? 'Gemini LLM scoring via server'                 : 'Local DistilBERT ONNX',   status: 'pending' },
+      { id: 'fact-check',     title: 'Fusion Analysis',     description: 'ONNX model + LLM claim-check + source credibility fusion',                          status: 'pending' },
+      { id: 'sentiment',      title: 'Sentiment Analysis',  description: isApi ? 'Gemini sentiment via server'                   : 'Skipped — no local model', status: 'pending' },
+      { id: 'image-scan',     title: 'Image Scanning',      description: isApi ? 'AI image detection via server'                 : 'Skipped — no local model', status: 'pending' },
+      { id: 'summarize',      title: 'Summarizing',         description: isApi ? 'Groq / Gemini summarization'                   : 'Skipped — no local model', status: 'pending' },
+      { id: 'report',         title: 'Building Report',     description: 'Compiling risk assessment',                                                          status: 'pending' },
     ]
   }
 
@@ -941,6 +1356,7 @@ const App: React.FC = () => {
     let sentimentResult: any = null
     let imageResults: any[] = []
     let localSummary: SummarizationResult | null = null
+    let localFusionResult: FusionResult | null = null
     const scanEntries: ScanEntry[] = []
 
     try {
@@ -1010,40 +1426,72 @@ const App: React.FC = () => {
         scanEntries.push({ id: '1', type: 'ai-generated', confidence: 0, description: 'AI detection skipped — no content extracted', timestamp: new Date() })
       }
 
-      // Stage 4: Fake news detection
+      // Stage 4: Fake news detection + Fusion analysis
       if (scrapeResult) {
         advanceStage('fact-check', 'loading')
         try {
-          if (inferenceMode === 'local') {
-            // ── Local ONNX path ──────────────────────────────────────────────
+          // ── Step A: Run local ONNX fake-news model (always, both modes) ────
+          let localOnnxScore: number | null = null
+          try {
             const localFakeResult = await detectFakeNewsLocally(scrapeResult.text)
+            localOnnxScore = localFakeResult.fakeLikelihoodPercent
             fakeDetectResult = { textPreview: localFakeResult.textPreview, fakeLikelihoodPercent: localFakeResult.fakeLikelihoodPercent }
-            advanceStage('fact-check', 'completed')
-            log(`Local fake-news score: ${localFakeResult.fakeLikelihoodPercent}%`)
+            log(`Local ONNX fake-news score: ${localOnnxScore}%`)
+          } catch (onnxErr) {
+            log(`Local ONNX fake-news failed (non-fatal): ${onnxErr}`)
+          }
+
+          // ── Step B: Run fusion analysis via Kit server ─────────────────────
+          // Fusion combines: ONNX score (sent from here) + LLM claim-check + Google FC + domain credibility
+          try {
+            log('Running fusion analysis via server...')
+            const fusion = await _truthScanClient.runFusionAnalysis(
+              scrapeResult.text,
+              scrapeResult.url || currentTab?.url || '',
+              localOnnxScore,
+            )
+            setFusionResult(fusion)
+            localFusionResult = fusion
+
+            // Use fusion fused score as the primary fake-news score
+            const fusedPct = fusion.fusion.fusedScore
+            fakeDetectResult = fakeDetectResult ?? { textPreview: scrapeResult.text.slice(0, 200), fakeLikelihoodPercent: fusedPct }
+            fakeDetectResult.fakeLikelihoodPercent = fusedPct
+
+            factCheckResult = { claims: fusion.legacyClaims }
+
+            const verdictLabel = fusion.fusion.verdict === 'fake'
+              ? 'likely fake'
+              : fusion.fusion.verdict === 'real'
+              ? 'likely real'
+              : 'uncertain'
+
             scanEntries.push({
               id: '2', type: 'fake-news',
-              confidence: localFakeResult.fakeLikelihoodPercent,
-              description: `Local model (DistilBERT): ${labelFakeRisk(localFakeResult.fakeLikelihoodPercent).toLowerCase()} likelihood of fake news`,
+              confidence: fusedPct,
+              description: `Fusion (ONNX + LLM + Sources, ${fusion.fusion.confidence} conf): ${verdictLabel} — ${fusion.claims.length} claims checked`,
               timestamp: new Date(),
             })
-          } else {
-            // ── API path ─────────────────────────────────────────────────────
-            const apiFactResult = await _truthScanClient.verifyFacts(scrapeResult.text)
-            const fakePct = _truthScanClient.computeMisinfoScore(apiFactResult.claims)
-            fakeDetectResult = { textPreview: scrapeResult.text.slice(0, 200), fakeLikelihoodPercent: fakePct }
-            factCheckResult = apiFactResult
             advanceStage('fact-check', 'completed')
-            log(`API fact-check misinformation score: ${fakePct}%`)
+            log(`Fusion score: ${fusedPct}% (${fusion.fusion.verdict})`)
+          } catch (fusionErr) {
+            log(`Fusion server unavailable — falling back to local ONNX only: ${fusionErr}`)
+            // Fallback: use ONNX score alone if server is down
+            const fallbackPct = localOnnxScore ?? 0
+            fakeDetectResult = fakeDetectResult ?? { textPreview: scrapeResult.text.slice(0, 200), fakeLikelihoodPercent: fallbackPct }
             scanEntries.push({
               id: '2', type: 'fake-news',
-              confidence: fakePct,
-              description: `API fact-check (Google Search): ${apiFactResult.claims.length} claims verified`,
+              confidence: fallbackPct,
+              description: `Local ONNX only (server offline): ${labelFakeRisk(fallbackPct).toLowerCase()} fake-news likelihood`,
               timestamp: new Date(),
             })
+            advanceStage('fact-check', inferenceMode === 'local' ? 'completed' : 'error',
+              inferenceMode === 'local' ? undefined : 'Fusion server unavailable'
+            )
           }
         } catch (err) {
           advanceStage('fact-check', 'error', err instanceof Error ? err.message : 'Fake-news detection failed')
-          scanEntries.push({ id: '2', type: 'fake-news', confidence: 0, description: `Fake-news detection failed (${inferenceMode} mode) — see console`, timestamp: new Date() })
+          scanEntries.push({ id: '2', type: 'fake-news', confidence: 0, description: `Fake-news detection failed — see console`, timestamp: new Date() })
         }
       } else {
         advanceStage('fact-check', 'error', 'No content — cannot run fake-news detection')
@@ -1079,6 +1527,7 @@ const App: React.FC = () => {
         overallRisk,
         results: scanEntries,
         factCheckClaims: factCheckResult?.claims ?? [],
+        pageText: scrapeResult?.text ?? '',
         apiData: {
           scrapedData: scrapeResult ?? { url: currentTab.url, text: '', images: [] },
           detectionResult: detectResult ?? { textPreview: '', aiLikelihoodPercent: 0 },
@@ -1088,6 +1537,7 @@ const App: React.FC = () => {
           imageDetectionResults: imageResults,
           timestamp: new Date(),
         },
+        fusionResult: localFusionResult ?? undefined,
       }
 
       setPageReport(report)
@@ -1203,8 +1653,13 @@ const App: React.FC = () => {
             summaryData={summaryData}
             summarizeInProgress={summarizeInProgress}
             imageExpanded={imageExpanded}
+            highlightMode={highlightMode}
+            highlightScoring={highlightScoring}
+            highlightStatus={highlightStatus}
             onSummarize={triggerSummarize}
             onToggleImages={() => setImageExpanded((v) => !v)}
+            onHighlight={triggerHighlight}
+            onClearHighlights={clearPageHighlights}
           />
         ) : activeTab === 'analysis' && (
           <div className="py-20 text-center">
