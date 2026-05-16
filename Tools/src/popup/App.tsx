@@ -1433,7 +1433,7 @@ const App: React.FC = () => {
           // ── Step A: Run local ONNX fake-news model (always, both modes) ────
           let localOnnxScore: number | null = null
           try {
-            const localFakeResult = await detectFakeNewsLocally(scrapeResult.text)
+            const localFakeResult = await detectFakeNewsLocally(scrapeResult.text, scrapeResult.url || currentTab?.url || '')
             localOnnxScore = localFakeResult.fakeLikelihoodPercent
             fakeDetectResult = { textPreview: localFakeResult.textPreview, fakeLikelihoodPercent: localFakeResult.fakeLikelihoodPercent }
             log(`Local ONNX fake-news score: ${localOnnxScore}%`)

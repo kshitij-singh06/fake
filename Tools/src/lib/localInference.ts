@@ -26,9 +26,11 @@ const FAKE_TOKENIZER_URL  = chrome.runtime.getURL('models/fake_detector/tokenize
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Maximum sequence length for RoBERTa */
-const MAX_SEQ_LEN    = 512
-/** Character limit fed to the tokenizer */
-const MAX_TEXT_CHARS = 2000
+const MAX_SEQ_LEN = 512
+/** Character limit fed to the tokenizer — fake-news model trained on full articles (~800 words) */
+const MAX_TEXT_CHARS_FAKE = 3500
+/** Character limit for AI detector (shorter is fine — AI patterns appear early) */
+const MAX_TEXT_CHARS_AI   = 2000
 
 // Both models are RoBERTa (vocab_size = 50265, GPT-2 BPE)
 const ROBERTA_CLS_ID    = 0      // <s>
@@ -240,9 +242,10 @@ function robertaTokenize(
 // Both models are RoBERTa-based — T=2.0 for both. RoBERTa is well-calibrated
 // on large corpora so we don’t need aggressive temperature scaling.
 
-const SOFTMAX_TEMPERATURE = 2.0
+const AI_SOFTMAX_TEMP   = 1.5
+const FAKE_SOFTMAX_TEMP = 1.3  // T=1.3: enough to tame OOD overconfidence without causing the ~80% plateau
 
-function softmax(logits: Float32Array, temperature = SOFTMAX_TEMPERATURE): Float32Array {
+function softmax(logits: Float32Array, temperature = 1.0): Float32Array {
   const scaled = logits.map((v) => v / temperature)
   const max    = Math.max(...Array.from(scaled))
   const exps   = scaled.map((v) => Math.exp(v - max))
@@ -251,16 +254,19 @@ function softmax(logits: Float32Array, temperature = SOFTMAX_TEMPERATURE): Float
 }
 
 /** AI detector — [15, 85] (roberta-base-openai-detector is well-calibrated) */
-function clampAiScore(p: number): number { return Math.min(85, Math.max(15, p)) }
+function clampAiScore(p: number): number { return Math.min(95, Math.max(10, p)) }  // T=1.5 applied by caller
 
 /** Fake-news detector — [15, 80] (hamzab/roberta-fake-news-classification) */
-function clampFakeScore(p: number): number { return Math.min(80, Math.max(15, p)) }
+function clampFakeScore(p: number): number { return Math.min(95, Math.max(5, p)) }  // T=1.0 - fixes ~80% plateau
 
 // ─── Core classifier (shared by both RoBERTa models) ─────────────────────────────
 
 /**
  * Generic RoBERTa inference: BPE tokenize → ONNX → softmax → clampFn.
  * Used by both AI detector and fake-news detector.
+ *
+ * @param maxChars    - character limit before tokenization (model-specific)
+ * @param temperature - softmax temperature (1.0 = none, fake model; 1.5 = AI model)
  */
 async function runRobertaClassification(
   session: ort.InferenceSession,
@@ -269,14 +275,16 @@ async function runRobertaClassification(
   labelIndex: number,
   labelTag: string,
   clampFn: (p: number) => number,
+  maxChars: number,
+  temperature: number,
 ): Promise<{ percent: number; textPreview: string }> {
-  const truncated = text.slice(0, MAX_TEXT_CHARS).trim()
+  const truncated = text.slice(0, maxChars).trim()
   if (!truncated) return { percent: 0, textPreview: '' }
 
   const { input_ids, attention_mask } = robertaTokenize(truncated, bpeData, MAX_SEQ_LEN)
   const seqLen = input_ids.length
 
-  console.log(`[TruthScan ONNX] ${labelTag} (RoBERTa) — seq len: ${seqLen}, first 8 IDs: [${input_ids.slice(0, 8).join(', ')}]`)
+  console.log(`[TruthScan ONNX] ${labelTag} (RoBERTa) — seq len: ${seqLen}, T=${temperature}, first 8 IDs: [${input_ids.slice(0, 8).join(', ')}]`)
 
   const dims = [1, seqLen]
   const feeds: Record<string, ort.Tensor> = {
@@ -288,11 +296,74 @@ async function runRobertaClassification(
   const results   = await session.run(feeds)
   const logitKey  = session.outputNames.find((n) => n.toLowerCase().includes('logit')) ?? session.outputNames[0]
   const logitsRaw = results[logitKey].data as Float32Array
-  const probs     = softmax(logitsRaw)
+  const probs     = softmax(logitsRaw, temperature)
   const percent   = clampFn(Math.round(probs[labelIndex] * 100))
 
   console.log(`[TruthScan ONNX] ${labelTag} — logits: [${Array.from(logitsRaw).join(', ')}] → ${percent}%`)
   return { percent, textPreview: truncated.slice(0, 200) }
+}
+
+// ─── Trusted Domain Cap ───────────────────────────────────────────────────────
+//
+// The ONNX model was trained on political news articles.
+// Encyclopedic / official / academic content is out-of-distribution and will
+// trigger erroneously high fake scores. We hardcode a trusted-domain list and
+// cap the ONNX score for these sites before it enters the fusion pipeline.
+//
+// Cap tiers:
+//   'encyclopedic' → max 20%  (Wikipedia, Britannica — definitionally non-fake)
+//   'government'   → max 20%  (official .gov / .edu sources)
+//   'major-news'   → max 35%  (Reuters, BBC, AP — primary sources)
+//   'academic'     → max 25%  (arXiv, PubMed, Nature, IEEE)
+
+const TRUSTED_DOMAIN_CAPS: { pattern: RegExp; cap: number; tier: string }[] = [
+  // Encyclopedic
+  { pattern: /wikipedia\.org/i,          cap: 20, tier: 'encyclopedic' },
+  { pattern: /britannica\.com/i,         cap: 20, tier: 'encyclopedic' },
+  { pattern: /wikimedia\.org/i,          cap: 20, tier: 'encyclopedic' },
+
+  // Government / official
+  { pattern: /\.gov(\/|$)/i,            cap: 20, tier: 'government' },
+  { pattern: /\.gov\.[a-z]{2}(\/|$)/i,  cap: 20, tier: 'government' },
+  { pattern: /\.edu(\/|$)/i,            cap: 25, tier: 'academic-institution' },
+  { pattern: /who\.int/i,               cap: 20, tier: 'government' },
+  { pattern: /un\.org/i,                cap: 20, tier: 'government' },
+  { pattern: /europa\.eu/i,             cap: 20, tier: 'government' },
+
+  // Academic / scientific
+  { pattern: /arxiv\.org/i,             cap: 25, tier: 'academic' },
+  { pattern: /pubmed\.ncbi\.nlm/i,      cap: 25, tier: 'academic' },
+  { pattern: /nature\.com/i,            cap: 25, tier: 'academic' },
+  { pattern: /science\.org/i,           cap: 25, tier: 'academic' },
+  { pattern: /ieee\.org/i,              cap: 25, tier: 'academic' },
+  { pattern: /springer\.com/i,          cap: 25, tier: 'academic' },
+  { pattern: /scholar\.google/i,        cap: 25, tier: 'academic' },
+
+  // Major international news wire / broadcasters
+  { pattern: /reuters\.com/i,           cap: 35, tier: 'major-news' },
+  { pattern: /apnews\.com/i,            cap: 35, tier: 'major-news' },
+  { pattern: /bbc\.(com|co\.uk)/i,      cap: 35, tier: 'major-news' },
+  { pattern: /bloomberg\.com/i,         cap: 35, tier: 'major-news' },
+  { pattern: /theguardian\.com/i,       cap: 35, tier: 'major-news' },
+  { pattern: /nytimes\.com/i,           cap: 35, tier: 'major-news' },
+  { pattern: /washingtonpost\.com/i,    cap: 35, tier: 'major-news' },
+  { pattern: /economist\.com/i,         cap: 35, tier: 'major-news' },
+  { pattern: /ft\.com/i,                cap: 35, tier: 'major-news' },
+  { pattern: /wsj\.com/i,               cap: 35, tier: 'major-news' },
+]
+
+/**
+ * Returns a score cap [0–100] for the given URL if it matches a trusted domain,
+ * or null if no cap applies.
+ */
+function getTrustedDomainCap(url: string): { cap: number; tier: string } | null {
+  if (!url) return null
+  for (const entry of TRUSTED_DOMAIN_CAPS) {
+    if (entry.pattern.test(url)) {
+      return { cap: entry.cap, tier: entry.tier }
+    }
+  }
+  return null
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -309,15 +380,21 @@ export interface LocalFakeDetectionResult {
   fakeLikelihoodPercent: number
   textPreview: string
   modelLoaded: boolean
+  /** Set when a trusted-domain cap was applied */
+  trustedDomainCap?: { originalScore: number; cappedScore: number; tier: string }
 }
 
 /**
  * Runs AI-text detection using roberta-base-openai-detector.
+ * Uses T=1.5 (mild smoothing) and 2000-char limit.
  */
 export async function detectAILocally(rawText: string): Promise<LocalDetectionResult> {
   try {
     const [session, bpeData] = await Promise.all([getAiSession(), getAiBpeData()])
-    const { percent, textPreview } = await runRobertaClassification(session, bpeData, rawText, LABEL_AI, 'AI', clampAiScore)
+    const { percent, textPreview } = await runRobertaClassification(
+      session, bpeData, rawText, LABEL_AI, 'AI', clampAiScore,
+      MAX_TEXT_CHARS_AI, AI_SOFTMAX_TEMP,
+    )
     return { aiLikelihoodPercent: percent, textPreview, modelLoaded: true }
   } catch (err) {
     console.error('[TruthScan ONNX] AI inference error:', err)
@@ -328,12 +405,41 @@ export async function detectAILocally(rawText: string): Promise<LocalDetectionRe
 /**
  * Runs fake-news detection using hamzab/roberta-fake-news-classification.
  * id2label: {"0": "FAKE", "1": "TRUE"} — so LABEL_FAKE = 0.
+ * Uses T=1.3 and 3500-char limit.
+ *
+ * @param rawText   - page text to analyse
+ * @param sourceUrl - optional page URL; if it matches a trusted domain the raw
+ *                    ONNX score is capped before returning (prevents false positives
+ *                    on encyclopedic / government / academic content).
  */
-export async function detectFakeNewsLocally(rawText: string): Promise<LocalFakeDetectionResult> {
+export async function detectFakeNewsLocally(
+  rawText: string,
+  sourceUrl = '',
+): Promise<LocalFakeDetectionResult> {
   try {
     const [session, bpeData] = await Promise.all([getFakeSession(), getFakeBpeData()])
-    const { percent, textPreview } = await runRobertaClassification(session, bpeData, rawText, LABEL_FAKE, 'FAKE', clampFakeScore)
-    return { fakeLikelihoodPercent: percent, textPreview, modelLoaded: true }
+    const { percent: rawPercent, textPreview } = await runRobertaClassification(
+      session, bpeData, rawText, LABEL_FAKE, 'FAKE', clampFakeScore,
+      MAX_TEXT_CHARS_FAKE, FAKE_SOFTMAX_TEMP,
+    )
+
+    // ── Apply trusted-domain cap if URL matches ──────────────────────────────
+    const domainCap = getTrustedDomainCap(sourceUrl)
+    if (domainCap && rawPercent > domainCap.cap) {
+      const cappedScore = domainCap.cap
+      console.log(
+        `[TruthScan ONNX] Trusted domain (${domainCap.tier}) — capping ONNX score ` +
+        `${rawPercent}% → ${cappedScore}% for: ${sourceUrl}`
+      )
+      return {
+        fakeLikelihoodPercent: cappedScore,
+        textPreview,
+        modelLoaded: true,
+        trustedDomainCap: { originalScore: rawPercent, cappedScore, tier: domainCap.tier },
+      }
+    }
+
+    return { fakeLikelihoodPercent: rawPercent, textPreview, modelLoaded: true }
   } catch (err) {
     console.error('[TruthScan ONNX] Fake-news inference error:', err)
     throw new Error(`Local fake-news inference failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -456,7 +562,10 @@ export async function scoreSentences(
 
     if (needAI) {
       try {
-        aiScore = (await runRobertaClassification(aiSession, aiBpeData, chunk, LABEL_AI, 'AI', clampAiScore)).percent
+        aiScore = (await runRobertaClassification(
+          aiSession, aiBpeData, chunk, LABEL_AI, 'AI', clampAiScore,
+          MAX_TEXT_CHARS_AI, AI_SOFTMAX_TEMP,
+        )).percent
       } catch (err) {
         console.warn(`[TruthScan ONNX] AI chunk failed (skipped): ${err}`)
       }
@@ -464,7 +573,10 @@ export async function scoreSentences(
 
     if (needFake) {
       try {
-        fakeScore = (await runRobertaClassification(fakeSession, fakeBpeData, chunk, LABEL_FAKE, 'FAKE', clampFakeScore)).percent
+        fakeScore = (await runRobertaClassification(
+          fakeSession, fakeBpeData, chunk, LABEL_FAKE, 'FAKE', clampFakeScore,
+          MAX_TEXT_CHARS_FAKE, FAKE_SOFTMAX_TEMP,
+        )).percent
       } catch (err) {
         console.warn(`[TruthScan ONNX] FAKE chunk failed (skipped): ${err}`)
       }

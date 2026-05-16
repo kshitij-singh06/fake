@@ -183,10 +183,12 @@ class TruthScanClient {
     }
   }
 
-  async verifyFacts(text: string): Promise<FactCheckResult> {
+  async verifyFacts(text: string, url?: string): Promise<FactCheckResult> {
     this.trace('Verifying facts, length:', text.length)
     try {
-      const data = await this.buildPostRequest<FactCheckResult>('/api/factcheck', { text })
+      const body: Record<string, unknown> = { text }
+      if (url) body.url = url
+      const data = await this.buildPostRequest<FactCheckResult>('/api/factcheck', body)
       this.trace('Fact-check result:', data)
       return data
     } catch (err) {
@@ -286,7 +288,7 @@ class TruthScanClient {
       const detectionResult = await this.runAiDetection(scrapedData.text)
       let factCheckResult: FactCheckResult | undefined
       if (withFactCheck) {
-        factCheckResult = await this.verifyFacts(scrapedData.text)
+        factCheckResult = await this.verifyFacts(scrapedData.text, url)
       }
       return { scrapedData, detectionResult, factCheckResult, timestamp: new Date() }
     } catch (err) {

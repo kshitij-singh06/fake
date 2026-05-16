@@ -57,7 +57,16 @@ Article:
 
 // ─── Tavily Evidence Fetching ─────────────────────────────────────────────────
 
-async function fetchTavilyEvidence(claim) {
+async function fetchTavilyEvidence(claim, sourceUrl = '') {
+  if (sourceUrl) {
+    const pageClass = classifyPageType(sourceUrl);
+    const credScore = scoreDomain(sourceUrl);
+    if (pageClass.type === 'news-trusted' || pageClass.type === 'official' || credScore >= 0.75) {
+      console.log(`[TruthScan Fusion] Skipping Tavily search because source is a trusted website.`);
+      return [];
+    }
+  }
+
   try {
     const { data } = await axios.post(
       TAVILY_SEARCH_URL,
@@ -140,22 +149,19 @@ exports.handleFusion = async (req, res) => {
   console.log(`[TruthScan Fusion] sourceUrl: ${sourceUrl || '(none)'}`);
   console.log(`[TruthScan Fusion] onnxFakeScore from client: ${onnxFakeScore}`);
 
-  // ── Step 0: Classify the page type ───────────────────────────────────────
   const pageClass = classifyPageType(sourceUrl);
   console.log(`[TruthScan Fusion] Page type: ${pageClass.type} | shouldFactCheck: ${pageClass.shouldFactCheck}`);
   console.log(`[TruthScan Fusion] Reason: ${pageClass.reason}`);
 
-  // ── Fast-path: trusted / reference / social / commercial pages ────────────
-  // These page types don't benefit from claim-checking and will produce
-  // incorrect results if we try to verify their own statements externally.
   if (!pageClass.shouldFactCheck) {
     const domainCredScore = scoreDomain(sourceUrl);
     const sourceDomainScore = credibilityToFakeScore(domainCredScore);
 
-    // Fuse only ONNX + domain (no LLM claims — skip for these page types)
+    // Fuse only ONNX + domain (no LLM claims / no Google FC — skip for these page types)
     const fusionResult = runFusionEngine({
-      onnxScore:         onnxFakeScore !== null ? Number(onnxFakeScore) : null,
-      llmClaimScore:     null,   // intentionally skipped
+      onnxScore:        onnxFakeScore !== null ? Number(onnxFakeScore) : null,
+      googleFCScore:    null,   // intentionally skipped — no claims to fact-check
+      llmClaimScore:    null,   // intentionally skipped
       sourceDomainScore,
     });
 
@@ -179,35 +185,26 @@ exports.handleFusion = async (req, res) => {
     // ── Step 1: Extract claims ────────────────────────────────────────────────
     const claims = await extractClaims(text);
 
-    // ── Step 2: Verify each claim (Tavily + LLM) ─────────────────────────────
-    const verifiedClaims = [];
-    const allSourceUrls  = [];
+    // ── Step 2: Verify each claim (Tavily + LLM + Google FC) ─────────────────
+    const verifiedClaims  = [];
+    const allSourceUrls   = [];
+    const googleFCRatings = [];   // accumulate Google FC scores across all claims
 
     for (const claim of claims) {
       // Fetch web evidence (Tavily)
-      const evidence = await fetchTavilyEvidence(claim);
+      const evidence = await fetchTavilyEvidence(claim, sourceUrl);
       allSourceUrls.push(...evidence.map((e) => e.link).filter(Boolean));
 
-      // Verify with structured LLM prompt
+      // Verify with structured LLM prompt (weak tiebreaker signal)
       const llmResult = await verifyClaimStructured(claim, evidence);
 
-      // Query Google Fact Check Tools (if API key is set)
+      // Query Google Fact Check Tools (primary signal — highest quality)
       const googleReviews = await queryGoogleFactCheck(claim);
       const googleResult  = aggregateFactCheckResults(googleReviews);
 
-      // If Google FC has a result, blend it with LLM (Google FC is higher quality)
-      let finalVerdict    = llmResult.verdict;
-      let finalConfidence = llmResult.confidence;
-
-      if (googleResult.aggregateScore !== null) {
-        // Google FC gives truthfulness (1.0 = true, 0.0 = false)
-        const gcScore = googleResult.aggregateScore;
-        if      (gcScore >= 0.65) finalVerdict = 'true';
-        else if (gcScore <= 0.35) finalVerdict = 'false';
-        else                      finalVerdict = 'uncertain';
-        // Boost confidence since Google FC is curated
-        finalConfidence = Math.min(95, finalConfidence + 15);
-      }
+      // Use LLM verdict for claim display, but NOT for driving the main score
+      const finalVerdict    = llmResult.verdict;
+      const finalConfidence = llmResult.confidence;
 
       verifiedClaims.push({
         claim,
@@ -219,7 +216,16 @@ exports.handleFusion = async (req, res) => {
         // Legacy compat field for existing UI
         isLikelyTrue: finalVerdict === 'true',
         supportingSources: evidence.map(({ title, link }) => ({ title, link })),
+        // Raw Google FC score for this claim (for transparency in UI)
+        googleFCScore: googleResult.aggregateScore !== null
+          ? Math.round((1 - googleResult.aggregateScore) * 100)
+          : null,
       });
+
+      // Accumulate Google FC aggregate for fusion
+      if (googleResult.aggregateScore !== null) {
+        googleFCRatings.push(googleResult.aggregateScore);
+      }
     }
 
     // ── Step 3: Domain credibility scoring ───────────────────────────────────
@@ -229,14 +235,22 @@ exports.handleFusion = async (req, res) => {
     // Convert credibility [0–1] → fake likelihood [0–100]
     const sourceDomainScore = credibilityToFakeScore(domainResult.averageScore);
 
-    // ── Step 4: LLM claim score ───────────────────────────────────────────────
+    // ── Step 4: LLM claim score (weak tiebreaker only) ────────────────────────
     const llmClaimScore = computeLLMClaimScore(
       verifiedClaims.map(({ verdict, confidence }) => ({ verdict, confidence }))
     );
 
+    // ── Step 4b: Google FC aggregate score (primary fact-check signal) ─────────
+    // Convert averaged truthfulness [0–1] → fake likelihood [0–100]
+    const googleFCScore = googleFCRatings.length > 0
+      ? Math.round((1 - (googleFCRatings.reduce((a, b) => a + b, 0) / googleFCRatings.length)) * 100)
+      : null;
+    console.log(`[TruthScan Fusion] Google FC aggregate fake score: ${googleFCScore ?? 'N/A (no reviews found)'}`);
+
     // ── Step 5: Weighted fusion ───────────────────────────────────────────────
     const fusionResult = runFusionEngine({
       onnxScore:        onnxFakeScore !== null ? Number(onnxFakeScore) : null,
+      googleFCScore,
       llmClaimScore,
       sourceDomainScore,
     });

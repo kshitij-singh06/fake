@@ -2,6 +2,8 @@
 const axios = require('axios');
 const { tryModelsInOrder } = require('../lib/modelHelpers');
 const { queryGoogleFactCheck } = require('../lib/googleFactCheck');
+const { classifyPageType } = require('../lib/pageClassifier');
+const { scoreDomain } = require('../lib/domainCredibility');
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const MAX_EVIDENCE_RESULTS = 5;
@@ -28,7 +30,16 @@ Extract clear factual claims from this text. Return them as a plain numbered lis
 }
 
 // Step 2: Fetch web evidence for a single claim via Tavily Search API (Fallback)
-async function fetchWebEvidence(claim) {
+async function fetchWebEvidence(claim, sourceUrl = '') {
+  if (sourceUrl) {
+    const pageClass = classifyPageType(sourceUrl);
+    const credScore = scoreDomain(sourceUrl);
+    if (pageClass.type === 'news-trusted' || pageClass.type === 'official' || credScore >= 0.75) {
+      console.log(`[TruthScan FactCheck] Skipping Tavily search because source is a trusted website.`);
+      return [];
+    }
+  }
+
   try {
     console.log(`[TruthScan FactCheck] Searching Tavily for: "${claim}"`);
 
@@ -109,7 +120,8 @@ Answer:
 
 // Main handler — orchestrates the full fact-check pipeline
 exports.handleFactCheck = async (req, res) => {
-  const { text } = req.body;
+  const { text, url, sourceUrl } = req.body;
+  const targetUrl = sourceUrl || url || '';
   if (!text) return res.status(400).json({ error: 'Text is required' });
 
   try {
@@ -137,7 +149,7 @@ exports.handleFactCheck = async (req, res) => {
 
       // 2. Supplement remaining slots via Tavily general web search if needed
       if (combinedEvidence.length < MAX_EVIDENCE_RESULTS) {
-        const tavilyEvidence = await fetchWebEvidence(claim);
+        const tavilyEvidence = await fetchWebEvidence(claim, targetUrl);
         for (const item of tavilyEvidence) {
           if (combinedEvidence.length >= MAX_EVIDENCE_RESULTS) break;
           combinedEvidence.push(item);

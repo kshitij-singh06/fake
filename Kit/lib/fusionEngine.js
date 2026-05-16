@@ -4,9 +4,10 @@
 // fake-news likelihood score [0–100] with a confidence level.
 //
 // ─── Signal Weights ───────────────────────────────────────────────────────────
-//   Local ONNX model score          → 40%
-//   LLM claim-level verification    → 35%
-//   Source domain credibility       → 25%
+//   Local ONNX model score          → 45%   (primary — trained, deterministic)
+//   Google Fact Check Tools API     → 35%   (curated human fact-checkers)
+//   Source domain credibility       → 15%   (known-good/bad domain lists)
+//   LLM claim-level verification    →  5%   (weak tiebreaker only — LLMs hallucinate)
 //
 // Each signal is optional. If a signal is missing (null/undefined), its weight
 // is redistributed proportionally among the available signals so the output
@@ -14,22 +15,24 @@
 //
 // ─── Output Schema ────────────────────────────────────────────────────────────
 // {
-//   fusedScore: number,           // 0–100: overall fake-news likelihood
+//   fusedScore: number,             // 0–100: overall fake-news likelihood
 //   verdict: 'real'|'fake'|'uncertain',
 //   confidence: 'high'|'medium'|'low',
 //   signals: {
-//     onnxScore: number|null,     // raw % from local model
-//     llmScore: number|null,      // derived from claim verdicts
-//     sourceScore: number|null,   // domain credibility converted to fake %
+//     onnxScore:         number|null,  // raw % from local ONNX model
+//     googleFCScore:     number|null,  // derived from Google Fact Check ratings
+//     llmScore:          number|null,  // derived from LLM claim verdicts
+//     sourceScore:       number|null,  // domain credibility converted to fake %
 //   },
-//   weights: { onnx, llm, source },  // actual weights used after redistribution
-//   reasoning: string,            // human-readable explanation
+//   weights: { onnx, googleFC, llm, source },  // actual weights after redistribution
+//   reasoning: string,              // human-readable explanation
 // }
 
 const WEIGHTS = {
-  onnx:   0.40,
-  llm:    0.35,
-  source: 0.25,
+  onnx:     0.45,   // local ONNX — primary signal
+  googleFC: 0.35,   // Google Fact Check Tools — curated, high quality
+  source:   0.15,   // domain credibility
+  llm:      0.05,   // LLM — weak tiebreaker only
 };
 
 // Verdict thresholds
@@ -45,21 +48,24 @@ const HIGH_CONFIDENCE_MAX_SPREAD  = 20; // signals agree within 20 points
  * Runs the fusion engine.
  *
  * @param {object} signals
- * @param {number|null} signals.onnxScore      - Fake-news likelihood [0–100] from local ONNX
- * @param {number|null} signals.llmClaimScore  - Fake-news likelihood [0–100] from LLM claim checks
- *                                               (derived: falseClaimCount/totalClaims * 100)
+ * @param {number|null} signals.onnxScore         - Fake-news likelihood [0–100] from local ONNX
+ * @param {number|null} signals.googleFCScore     - Fake-news likelihood [0–100] from Google Fact Check
+ *                                                  (derived: (1 - aggregateScore) * 100)
+ * @param {number|null} signals.llmClaimScore     - Fake-news likelihood [0–100] from LLM claim checks
+ *                                                  (weak signal — used only as tiebreaker)
  * @param {number|null} signals.sourceDomainScore - Fake-news likelihood [0–100] from domain credibility
- *                                               (derived: (1 - credibility) * 100)
+ *                                                  (derived: (1 - credibility) * 100)
  * @returns FusionResult
  */
-function runFusionEngine({ onnxScore = null, llmClaimScore = null, sourceDomainScore = null } = {}) {
-  console.log('[TruthScan Fusion] Inputs:', { onnxScore, llmClaimScore, sourceDomainScore });
+function runFusionEngine({ onnxScore = null, googleFCScore = null, llmClaimScore = null, sourceDomainScore = null } = {}) {
+  console.log('[TruthScan Fusion] Inputs:', { onnxScore, googleFCScore, llmClaimScore, sourceDomainScore });
 
   // ── Build available-signal map ─────────────────────────────────────────────
   const available = {};
-  if (onnxScore        !== null && onnxScore        !== undefined) available.onnx   = onnxScore;
-  if (llmClaimScore    !== null && llmClaimScore    !== undefined) available.llm    = llmClaimScore;
-  if (sourceDomainScore !== null && sourceDomainScore !== undefined) available.source = sourceDomainScore;
+  if (onnxScore         !== null && onnxScore         !== undefined) available.onnx     = onnxScore;
+  if (googleFCScore     !== null && googleFCScore     !== undefined) available.googleFC = googleFCScore;
+  if (sourceDomainScore !== null && sourceDomainScore !== undefined) available.source   = sourceDomainScore;
+  if (llmClaimScore     !== null && llmClaimScore     !== undefined) available.llm      = llmClaimScore;
 
   const signalCount = Object.keys(available).length;
 
@@ -68,8 +74,8 @@ function runFusionEngine({ onnxScore = null, llmClaimScore = null, sourceDomainS
       fusedScore: 50,
       verdict: 'uncertain',
       confidence: 'low',
-      signals: { onnxScore, llmClaimScore, sourceDomainScore },
-      weights: { onnx: 0, llm: 0, source: 0 },
+      signals: { onnxScore, googleFCScore, llmClaimScore, sourceDomainScore },
+      weights: { onnx: 0, googleFC: 0, llm: 0, source: 0 },
       reasoning: 'No signals available — cannot make a determination.',
     };
   }
@@ -111,9 +117,10 @@ function runFusionEngine({ onnxScore = null, llmClaimScore = null, sourceDomainS
 
   // ── Reasoning ─────────────────────────────────────────────────────────────
   const reasonParts = [];
-  if (available.onnx   !== undefined) reasonParts.push(`ONNX model: ${available.onnx.toFixed(0)}%`);
-  if (available.llm    !== undefined) reasonParts.push(`LLM claims: ${available.llm.toFixed(0)}%`);
-  if (available.source !== undefined) reasonParts.push(`Source credibility: ${available.source.toFixed(0)}%`);
+  if (available.onnx     !== undefined) reasonParts.push(`ONNX model: ${available.onnx.toFixed(0)}%`);
+  if (available.googleFC !== undefined) reasonParts.push(`Google Fact Check: ${available.googleFC.toFixed(0)}%`);
+  if (available.source   !== undefined) reasonParts.push(`Source credibility: ${available.source.toFixed(0)}%`);
+  if (available.llm      !== undefined) reasonParts.push(`LLM (tiebreaker): ${available.llm.toFixed(0)}%`);
   const reasoning = `Fused from ${signalCount} signal(s) [${reasonParts.join(', ')}] with ${spread.toFixed(0)}pt spread → ${fusedScore}% fake likelihood.`;
 
   console.log(`[TruthScan Fusion] Result: ${fusedScore}% (${verdict}, ${confidence} confidence) — ${reasoning}`);
@@ -123,14 +130,16 @@ function runFusionEngine({ onnxScore = null, llmClaimScore = null, sourceDomainS
     verdict,
     confidence,
     signals: {
-      onnxScore:         available.onnx   ?? null,
-      llmClaimScore:     available.llm    ?? null,
-      sourceDomainScore: available.source ?? null,
+      onnxScore:         available.onnx     ?? null,
+      googleFCScore:     available.googleFC ?? null,
+      llmClaimScore:     available.llm      ?? null,
+      sourceDomainScore: available.source   ?? null,
     },
     weights: {
-      onnx:   usedWeights.onnx   ?? 0,
-      llm:    usedWeights.llm    ?? 0,
-      source: usedWeights.source ?? 0,
+      onnx:     usedWeights.onnx     ?? 0,
+      googleFC: usedWeights.googleFC ?? 0,
+      llm:      usedWeights.llm      ?? 0,
+      source:   usedWeights.source   ?? 0,
     },
     reasoning,
   };
