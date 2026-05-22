@@ -1,145 +1,139 @@
-# TruthScan - AI Content Detection Chrome Extension
+# TruthScan
 
-🏆 **Hackathon Project** - Advanced threat interception system for detecting fake content and AI-generated media
+TruthScan is a Chrome extension and optional API backend for detecting AI-generated text, fake news, and suspicious content on the web. The extension can run fully offline using local ONNX models, or switch to API mode for richer fact-checking, summarization, Q&A, and image analysis.
 
-## 🎯 What is TruthScan?
+## What This Repo Contains
 
-TruthScan is a Chrome browser extension that helps users identify:
-- AI-generated text content
-- Fake news and misinformation
-- AI-generated images and deepfakes
-- Biased or manipulated content
+- **Chrome extension** (Tools/) with local ONNX inference for AI-text and fake-news detection.
+- **API server** (Kit/) that provides scraping, fact-checking, summarization, Q&A, sentiment, image detection, and a multi-signal fusion engine.
+- **Web demo server** (server.js at repo root) that serves the demo UI and exposes the same API endpoints on port 5000.
 
-## 🚀 Quick Start (For Judges)
+## ML Models (Local ONNX)
 
-### Web Demo (Dry Run)
-The web demo is already running! Just view the Replit webview to see it in action.
+The extension runs the following Hugging Face models converted to ONNX and quantized:
 
-**Features you can test:**
-1. **AI Text Detection** - Paste any text to check if it's AI-generated
-2. **Fact Checking** - Verify claims against reliable sources
-3. **Sentiment Analysis** - Analyze emotional tone and bias
-4. **Content Summarization** - Get concise summaries of long text
-5. **Image AI Detection** - Check if images are AI-generated
+- `openai-community/roberta-base-openai-detector`
+- `hamzab/roberta-fake-news-classification`
 
-### Setup Requirements
+Model assets live in Tools/public/models and are loaded via onnxruntime-web with custom RoBERTa BPE tokenization.
 
-To use the demo, you'll need API keys in `Kit/.env`:
+## Project Structure
+
+```
+TruthScan/
+├── Kit/                 # API server (Node.js/Express)
+│   ├── controllers/     # Detection, fact-checking, QA, summarize, image, fusion
+│   ├── lib/             # Fusion logic, domain credibility, model helpers
+│   ├── routes/          # Express routes
+│   └── server.js        # API entrypoint (default :3000)
+├── Tools/               # Chrome extension (React/TypeScript)
+│   ├── src/             # Popup UI, background, content scripts
+│   ├── public/          # Extension assets + ONNX models
+│   └── manifest.json
+├── public/              # Demo web UI
+├── server.js            # Demo server (default :5000)
+└── README.md
+```
+
+## Setup
+
+### 1) Chrome Extension (Local Mode Only)
+
+This does not require any backend or API keys.
+
+```bash
+cd Tools
+npm install
+npm run build
+```
+
+Load the extension:
+
+1. Open `chrome://extensions/`
+2. Enable Developer mode
+3. Click Load unpacked
+4. Select Tools/dist
+
+### 2) API Server (Optional)
+
+The API server powers scraping, fact-checking, summarization, Q&A, image detection, and fusion. It runs on port 3000 by default.
+
+```bash
+cd Kit
+npm install
+node server.js
+```
+
+### 3) Demo Server (Optional)
+
+The repo root server serves public/index.html and exposes the same API routes on port 5000. It reads Kit/.env for keys.
+
+```bash
+npm install
+node server.js
+```
+
+## Quick Demo
+
+Pick the flow you want:
+
+### A) Local Extension Only (Offline)
+
+```bash
+cd Tools
+npm install
+npm run build
+```
+
+Load Tools/dist in Chrome and scan any page in Local mode.
+
+### B) API Mode + Demo UI
+
+```bash
+cd Kit
+npm install
+node server.js
+```
+
+In another terminal:
+
+```bash
+npm install
+node server.js
+```
+
+Open http://localhost:5000 for the demo UI. In the extension, switch to API mode to use the backend.
+
+## Environment Variables (Kit/.env)
+
+Only required if you run the API server or demo server.
 
 ```env
-GEMINI_API_KEY=your_google_gemini_key
-GROQ_API_KEY=your_groq_key
-NVIDIA_API_KEY=your_nvidia_key
-GOOGLE_SEARCH_API_KEY=your_google_search_key
-GOOGLE_SEARCH_ENGINE_ID=your_search_engine_id
+GEMINI_API_KEY=...
+GROQ_API_KEY=...
+NVIDIA_API_KEY=...
+TAVILY_API_KEY=...
+GOOGLE_FACT_CHECK_API_KEY=...
 ```
 
-## 🏗️ Project Structure
+## API Endpoints
 
-```
-├── Kit/              # Backend API Server (Node.js/Express)
-│   ├── controllers/  # AI detection, fact-checking, sentiment, etc.
-│   ├── routes/       # API endpoints
-│   └── server.js     # Main server file
-│
-├── Tools/            # Chrome Extension (React/TypeScript)
-│   ├── src/
-│   │   ├── popup/    # Extension popup UI
-│   │   ├── background/ # Service worker
-│   │   └── content/  # Content scripts
-│   └── manifest.json
-│
-├── public/           # Web Demo (Dry Run)
-│   └── index.html    # Interactive demo interface
-│
-└── server.js         # Demo web server
-```
-
-## 🔧 Technical Stack
-
-**Backend:**
-- Node.js + Express
-- Google Gemini AI (text detection)
-- NVIDIA API (image detection)
-- Groq AI (sentiment & summarization)
-- Puppeteer (web scraping)
-
-**Chrome Extension:**
-- React 18 + TypeScript
-- Vite (build tool)
-- Tailwind CSS
-- Chrome Extension Manifest V3
-
-**Demo Frontend:**
-- Vanilla JavaScript
-- Real-time API testing
-
-## 🎨 Features in Detail
-
-### 1. AI Content Detection
-Uses Google Gemini to analyze text patterns and identify AI-generated content with confidence scores.
-
-### 2. Fact Checking
-Verifies claims using Google Search API and provides supporting sources for verification.
-
-### 3. Image Analysis
-Detects AI-generated images using NVIDIA's advanced detection models.
-
-### 4. Sentiment Analysis
-Analyzes emotional tone, bias, and manipulation indicators in text.
-
-### 5. Content Summarization
-Provides concise summaries of long articles or web pages.
-
-## 🔌 API Endpoints
-
-- `POST /api/detect` - AI text detection
-- `POST /api/factcheck` - Fact verification
+- `POST /api/scrape` - Extracts page text and images
+- `POST /api/detect` - LLM-based AI text detection
+- `POST /api/factcheck` - Claim extraction + verification
 - `POST /api/sentiment` - Sentiment analysis
-- `POST /api/summarize` - Content summarization
-- `POST /api/qa` - Question answering
-- `POST /api/image-detect-ai` - Image AI detection
-- `POST /api/scrape` - Web page scraping
+- `POST /api/summarize` - Bullet-point summarization
+- `POST /api/qa` - Question answering over content
+- `POST /api/image-detect-ai` - NVIDIA image AI detection
+- `POST /api/fusion` - Multi-signal fake-news score (ONNX + sources + fact-check)
 
-## 📦 Installation (Chrome Extension)
+## Notes
 
-1. Install dependencies:
-   ```bash
-   cd Tools
-   npm install
-   ```
+- The extension defaults to **Local** mode (ONNX). **API** mode calls the Kit server at http://localhost:3000.
+- The root demo server binds to http://0.0.0.0:5000 and proxies all API routes to the same Kit handlers.
 
-2. Build the extension:
-   ```bash
-   npm run build
-   ```
+## Security & Privacy
 
-3. Load in Chrome:
-   - Go to `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked"
-   - Select the `Tools/dist` folder
-
-## 🏃 Running Locally
-
-The project is already configured with Replit workflows:
-
-- **backend** - API server on localhost:3000
-- **demo** - Web demo on port 5000
-
-Both are running automatically!
-
-## 🎯 Use Cases
-
-- **Journalists** - Verify sources and detect fake news
-- **Students** - Check if content is AI-generated
-- **Researchers** - Analyze content authenticity
-- **General Users** - Stay safe from misinformation online
-
-## 🔐 Security & Privacy
-
-- No user data collection
-- No browsing history tracking
-- All analysis performed securely via APIs
-- Local processing where possible
+- Local mode runs entirely in the browser with no network calls.
+- API mode only sends page text/URLs to your own server instance.
 

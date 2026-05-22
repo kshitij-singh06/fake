@@ -1,6 +1,6 @@
 # Fact-Checking Implementation
 
-This document describes the fact-checking functionality that has been implemented in the Factora Content Detector Chrome extension.
+This document describes the fact-checking functionality that has been implemented in the truthscan Content Detector Chrome extension.
 
 ## Overview
 
@@ -91,7 +91,7 @@ The server already includes the fact-checking functionality:
 ## Testing
 
 ### Prerequisites
-1. Start the server: `cd factora-server && node server.js`
+1. Start the server: `cd truthscan-server && node server.js`
 2. Ensure environment variables are set:
    - `API_KEY`
    - `GOOGLE_SEARCH_API_KEY`
@@ -135,3 +135,5 @@ If the API is unavailable, the extension shows mock fact-check data:
 ✅ **Integrated workflow** with content detection
 ✅ **Fallback handling** when API is unavailable
 ✅ **Responsive UI** with dark mode support
+
+

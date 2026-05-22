@@ -1,130 +1,127 @@
-# Factora Content Detector
+# TruthScan Chrome Extension
 
-A sophisticated Chrome extension that proactively identifies and disrupts fake content and honeytrap operations on the web.
+This package contains the TruthScan browser extension UI and local inference pipeline. It can run fully offline using ONNX models, or switch to API mode to call the backend in Kit/.
 
-## Features
+## What The Extension Does
 
-- 🔍 **Content Detection**: Analyzes web pages for generated content patterns
-- 🚨 **Fake News Detection**: Identifies potential fake news and misinformation
-- 🎨 **Modern UI**: Clean, responsive interface with dark/light theme support
-- ⚡ **Real-time Analysis**: Instant scanning and analysis of web content
-- 📊 **Detailed Reports**: Comprehensive analysis with confidence scores
-- 🔧 **Customizable Settings**: User preferences and scanning options
+- **Local AI-text detection** using ONNX (RoBERTa) with custom BPE tokenization.
+- **Local fake-news detection** using ONNX (RoBERTa) on the page text.
+- **Optional API mode** for scraping, fact-checking, summarization, Q&A, sentiment, image AI detection, and fusion scoring.
+
+## Local ML Models
+
+The extension loads quantized ONNX versions of:
+
+- `openai-community/roberta-base-openai-detector`
+- `hamzab/roberta-fake-news-classification`
+
+Model files live in Tools/public/models and are fetched via `chrome.runtime.getURL`.
 
 ## Tech Stack
 
-- **Frontend**: React 18 + TypeScript
-- **Styling**: Tailwind CSS with custom design system
-- **Icons**: Lucide React
-- **Build Tool**: Vite
-- **Extension**: Chrome Extension Manifest V3
+- React 18 + TypeScript
+- Vite + Tailwind CSS
+- onnxruntime-web
+- Chrome Extension Manifest V3
 
 ## Project Structure
 
 ```
-factora1/
+Tools/
 ├── src/
-│   ├── popup/           # Extension popup UI
-│   ├── background/      # Service worker
-│   ├── content/         # Content scripts
-│   └── lib/            # Utility functions
-├── public/             # Static assets
-├── dist/              # Build output
-└── manifest.json      # Extension manifest
+│   ├── popup/          # Extension popup UI
+│   ├── background/     # Service worker
+│   ├── content/        # Content script
+│   └── lib/            # Local inference + API client
+├── public/             # Static assets + ONNX models
+├── dist/               # Build output
+└── manifest.json
 ```
 
 ## Development
 
 ### Prerequisites
 
-- Node.js 18+ 
-- npm or yarn
+- Node.js 18+
+- npm
 
-### Installation
+### Install
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+```
 
-### Development Mode
+### Dev Server
 
 ```bash
 npm run dev
 ```
 
-### Build for Production
+### Production Build
 
 ```bash
 npm run build
 ```
 
-### Loading the Extension
+### Load The Extension
 
-1. Build the project: `npm run build`
-2. Open Chrome and go to `chrome://extensions/`
-3. Enable "Developer mode"
-4. Click "Load unpacked" and select the `dist` folder
+1. Build: `npm run build`
+2. Open `chrome://extensions/`
+3. Enable Developer mode
+4. Click Load unpacked and select Tools/dist
 
-## Usage
+## API Mode
 
-1. **Install the Extension**: Load the extension in Chrome
-2. **Navigate to a Webpage**: Visit any website you want to analyze
-3. **Click the Extension Icon**: Open the popup to see the interface
-4. **Scan the Page**: Click "Scan Page" to analyze the content
-5. **Review Results**: View detailed analysis and risk assessments
+API mode calls the backend server at http://localhost:3000 (see Tools/src/lib/api.ts). It unlocks:
 
-## Features in Detail
+- Scraping and extraction
+- Fact-checking and fusion scoring
+- Summarization and Q&A
+- Sentiment analysis
+- Image AI detection
 
-### Content Detection
-- Analyzes text patterns and writing styles
-- Identifies generated content markers
-- Provides confidence scores for detection
+Start the API server:
 
-### Fake News Detection
-- Checks for credible sources and citations
-- Analyzes claim consistency
-- Identifies sensationalist language patterns
+```bash
+cd Kit
+npm install
+node server.js
+```
 
-### Risk Assessment
-- **Low Risk**: Content appears genuine
-- **Medium Risk**: Some suspicious indicators
-- **High Risk**: Strong evidence of generated content or fake news
+API mode requires keys in Kit/.env. See the root README for the full list.
 
-### Settings
-- **Theme Toggle**: Switch between light and dark themes
-- **Auto Scan**: Automatically scan pages on load
-- **Notifications**: Enable/disable alerts
+If you are running the demo UI, use the root server (port 5000) and switch the extension to API mode.
 
-## Contributing
+## Quick Demo
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+### Local Extension Only (Offline)
 
-## License
+```bash
+npm install
+npm run build
+```
 
-MIT License - see LICENSE file for details
+Load Tools/dist in Chrome and scan any page in Local mode.
 
-## Roadmap
+### API Mode + Demo UI
 
-- [ ] Integration with external fact-checking APIs
-- [ ] Advanced algorithms for improved detection
-- [ ] Browser action badge with real-time alerts
-- [ ] Export analysis reports
-- [ ] Custom detection rules
-- [ ] Multi-language support
+```bash
+cd ..\Kit
+npm install
+node server.js
+```
 
-## Security
+In another terminal:
 
-This extension:
-- Only reads page content for analysis
-- Does not collect personal data
-- Does not track user browsing history
-- All analysis is performed locally or through secure APIs
+```bash
+cd ..
+npm install
+node server.js
+```
 
-## Support
+Open http://localhost:5000 for the demo UI. Switch the extension to API mode for server-powered features.
 
-For issues and feature requests, please open an issue on GitHub. 
+## Notes
+
+- Local mode is the default and does not send any data off-device.
+- If you only want local ONNX inference, you do not need any API keys.

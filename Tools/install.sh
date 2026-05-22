@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Installing Factora AI Detector dependencies..."
+echo "Installing truthscan AI Detector dependencies..."
 npm install
 
 echo ""

@@ -6,12 +6,12 @@ This endpoint provides AI-powered question answering using Groq's API, allowing 
 
 ### 1. Install Dependencies
 ```bash
-cd factora-server
+cd truthscan-server
 npm install
 ```
 
 ### 2. Environment Setup
-Create a `.env` file in the `factora-server` directory:
+Create a `.env` file in the `truthscan-server` directory:
 ```bash
 GROQ_API_KEY=your_groq_api_key_here
 PORT=5000
@@ -181,3 +181,5 @@ Here are some example questions you can try:
 - "What evidence supports the claims made?"
 - "What are the different applications mentioned?"
 - "What recommendations are provided?"
+
+

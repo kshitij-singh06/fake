@@ -6,12 +6,12 @@ This endpoint provides AI-powered content summarization using Groq's API, conver
 
 ### 1. Install Dependencies
 ```bash
-cd factora-server
+cd truthscan-server
 npm install
 ```
 
 ### 2. Environment Setup
-Create a `.env` file in the `factora-server` directory:
+Create a `.env` file in the `truthscan-server` directory:
 ```bash
 GROQ_API_KEY=your_groq_api_key_here
 PORT=5000
@@ -146,3 +146,5 @@ Add logging to see detailed API calls:
 ```javascript
 console.log('Groq API Response:', completion);
 ```
+
+

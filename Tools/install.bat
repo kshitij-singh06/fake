@@ -1,5 +1,5 @@
 @echo off
-echo Installing Factora AI Detector dependencies...
+echo Installing truthscan AI Detector dependencies...
 npm install
 echo.
 echo Building the extension...
@@ -13,3 +13,4 @@ echo 2. Enable "Developer mode"
 echo 3. Click "Load unpacked" and select the dist folder
 echo.
 pause 
+
