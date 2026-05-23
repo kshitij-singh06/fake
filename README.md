@@ -6,7 +6,6 @@ TruthScan is a Chrome extension and optional API backend for detecting AI-genera
 
 - **Chrome extension** (Tools/) with local ONNX inference for AI-text and fake-news detection.
 - **API server** (Kit/) that provides scraping, fact-checking, summarization, Q&A, sentiment, image detection, and a multi-signal fusion engine.
-- **Web demo server** (server.js at repo root) that serves the demo UI and exposes the same API endpoints on port 5000.
 
 ## ML Models (Local ONNX)
 
@@ -30,8 +29,6 @@ TruthScan/
 │   ├── src/             # Popup UI, background, content scripts
 │   ├── public/          # Extension assets + ONNX models
 │   └── manifest.json
-├── public/              # Demo web UI
-├── server.js            # Demo server (default :5000)
 └── README.md
 ```
 
@@ -64,15 +61,6 @@ npm install
 node server.js
 ```
 
-### 3) Demo Server (Optional)
-
-The repo root server serves public/index.html and exposes the same API routes on port 5000. It reads Kit/.env for keys.
-
-```bash
-npm install
-node server.js
-```
-
 ## Quick Demo
 
 Pick the flow you want:
@@ -87,7 +75,7 @@ npm run build
 
 Load Tools/dist in Chrome and scan any page in Local mode.
 
-### B) API Mode + Demo UI
+### B) API Mode (Extension + Backend)
 
 ```bash
 cd Kit
@@ -95,18 +83,11 @@ npm install
 node server.js
 ```
 
-In another terminal:
-
-```bash
-npm install
-node server.js
-```
-
-Open http://localhost:5000 for the demo UI. In the extension, switch to API mode to use the backend.
+Switch the extension to API mode to use the backend features.
 
 ## Environment Variables (Kit/.env)
 
-Only required if you run the API server or demo server.
+Only required if you run the API server.
 
 ```env
 GEMINI_API_KEY=...
@@ -130,7 +111,6 @@ GOOGLE_FACT_CHECK_API_KEY=...
 ## Notes
 
 - The extension defaults to **Local** mode (ONNX). **API** mode calls the Kit server at http://localhost:3000.
-- The root demo server binds to http://0.0.0.0:5000 and proxies all API routes to the same Kit handlers.
 
 ## Security & Privacy
 

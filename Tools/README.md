@@ -90,8 +90,6 @@ node server.js
 
 API mode requires keys in Kit/.env. See the root README for the full list.
 
-If you are running the demo UI, use the root server (port 5000) and switch the extension to API mode.
-
 ## Quick Demo
 
 ### Local Extension Only (Offline)
@@ -103,7 +101,7 @@ npm run build
 
 Load Tools/dist in Chrome and scan any page in Local mode.
 
-### API Mode + Demo UI
+### API Mode (Extension + Backend)
 
 ```bash
 cd ..\Kit
@@ -111,15 +109,7 @@ npm install
 node server.js
 ```
 
-In another terminal:
-
-```bash
-cd ..
-npm install
-node server.js
-```
-
-Open http://localhost:5000 for the demo UI. Switch the extension to API mode for server-powered features.
+Switch the extension to API mode for server-powered features.
 
 ## Notes
 
